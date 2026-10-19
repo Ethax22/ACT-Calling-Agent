@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agni AI phone test</title>
+<style>
+  body{font:16px system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem;color:#222}
+  button{font:inherit;padding:.6rem 1.2rem;margin-right:.5rem}
+  input{font:inherit;padding:.4rem;width:10rem}
+  #status{margin:1rem 0;font-weight:600} pre{background:#f4f4f4;padding:.6rem;max-height:14rem;overflow:auto}
+</style></head><body>
+<h1>Agni AI phone test</h1>
+<p>Talks to the phone agent through a simulated phone line (8 kHz, mu-law), so it sounds like a call. Use headphones.</p>
+<p><label>Caller number <input id="caller" value="9000000001"></label></p>
+<p><button id="call">Call</button><button id="hang" disabled>Hang up</button></p>
+<div id="status">Idle</div><pre id="log"></pre>
+<script>
+const $ = id => document.getElementById(id);
+const log = t => { $('log').textContent += t + '\n'; $('log').scrollTop = 1e9; };
+let ws, micCtx, micStream, playCtx, nextTime = 0, sources = new Set();
+
+function stopPlayback() { sources.forEach(s => { try { s.stop(); } catch (e) {} }); sources.clear(); nextTime = 0; }
+
+function play(buf) {  // raw PCM16 mono, 8 kHz
+  const i16 = new Int16Array(buf), f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  const ab = playCtx.createBuffer(1, f32.length, 8000); ab.copyToChannel(f32, 0);
+  const src = playCtx.createBufferSource(); src.buffer = ab; src.connect(playCtx.destination);
+  nextTime = Math.max(nextTime, playCtx.currentTime + 0.05);
+  src.start(nextTime); nextTime += ab.duration; sources.add(src);
+  src.onended = () => sources.delete(src);
+}
+
+const WORKLET = `class Cap extends AudioWorkletProcessor {
+  constructor() { super(); this.b = []; }
+  process(inputs) {
+    const c = inputs[0][0];
+    if (c) {
+      for (const s of c) this.b.push(s);
+      while (this.b.length >= 320) {
+        const o = new Int16Array(320);
+        for (let k = 0; k < 320; k++) o[k] = Math.max(-1, Math.min(1, this.b[k])) * 32767;
+        this.b.splice(0, 320);
+        this.port.postMessage(o.buffer, [o.buffer]);
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('cap', Cap);`;
+
+async function startCall() {
+  $('call').disabled = true; $('status').textContent = 'Connecting...';
+  micStream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
+  micCtx = new AudioContext({sampleRate: 16000}); playCtx = new AudioContext();
+  const url = URL.createObjectURL(new Blob([WORKLET], {type: 'application/javascript'}));
+  await micCtx.audioWorklet.addModule(url); URL.revokeObjectURL(url);
+  const node = new AudioWorkletNode(micCtx, 'cap', {numberOfOutputs: 0});
+  micCtx.createMediaStreamSource(micStream).connect(node);
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/test/ws?caller=${encodeURIComponent($('caller').value)}`);
+  ws.binaryType = 'arraybuffer';
+  node.port.onmessage = e => { if (ws.readyState === 1) ws.send(e.data); };
+  ws.onopen = () => { $('status').textContent = 'On the call'; $('hang').disabled = false; };
+  ws.onmessage = e => {
+    if (typeof e.data === 'string') {
+      const m = JSON.parse(e.data);
+      if (m.type === 'UserStartedSpeaking') stopPlayback(); else log(e.data);
+    } else play(e.data);
+  };
+  ws.onclose = hangUp; ws.onerror = () => log('connection error');
+}
+
+function hangUp() {
+  if (ws && ws.readyState <= 1) ws.close();
+  stopPlayback(); if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (micCtx) micCtx.close(); if (playCtx) playCtx.close();
+  micCtx = playCtx = micStream = null;
+  $('status').textContent = 'Idle'; $('call').disabled = false; $('hang').disabled = true;
+}
+$('call').onclick = () => startCall().catch(e => { log(String(e)); hangUp(); });
+$('hang').onclick = hangUp;
+</script></body></html>
