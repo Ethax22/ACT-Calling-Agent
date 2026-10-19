@@ -1,0 +1,5 @@
+.env
+erp.db
+raw/
+fake_contacts/
+__pycache__/

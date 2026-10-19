@@ -1,0 +1,12 @@
+.env
+*.env
+!.env.example
+*.db
+raw/
+fake_contacts/
+__pycache__/
+*.pyc
+venv/
+.venv/
+logs/
+reports/
