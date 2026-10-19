@@ -59,8 +59,13 @@ def test_test_page_and_socket_switch_off(monkeypatch):
 def test_phone_pipeline_uses_the_phone_profile(monkeypatch):
     import pipecat.transports.websocket.fastapi as fastapi_transport
 
-    from call_pipeline import build_phone_pipeline
+    import erp_client
+    from call_pipeline import start_phone_call
 
+    async def fake_identify(self, number):
+        return {"status": "known", "role": "student", "first_name": "Abinaya"}
+
+    monkeypatch.setattr(erp_client.ErpClient, "identify", fake_identify)
     seen = {}
     real = fastapi_transport.FastAPIWebsocketTransport
 
@@ -71,7 +76,14 @@ def test_phone_pipeline_uses_the_phone_profile(monkeypatch):
 
     monkeypatch.setattr(fastapi_transport, "FastAPIWebsocketTransport", Spy)
     serializer = BrowserPhoneSerializer()
-    build_phone_pipeline(MagicMock(), "phone-test-x", serializer)
+
+    async def go():
+        call = await start_phone_call(MagicMock(), "phone-test-x", serializer, "9000000001")
+        call.control._cap_task.cancel()
+        return call
+
+    call = asyncio.run(go())
     p = seen["params"]
     assert p.serializer is serializer and p.audio_out_sample_rate == 8000
     assert p.audio_in_sample_rate in (8000, 16000)
+    assert (call.role, call.first_name) == ("student", "Abinaya")

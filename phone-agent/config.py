@@ -22,7 +22,7 @@ load_dotenv(Path(VOICE_PIPELINE_DIR) / ".env")  # does not override values alrea
 if VOICE_PIPELINE_DIR not in sys.path:
     sys.path.insert(0, VOICE_PIPELINE_DIR)
 
-CALL_MAX_MINUTES = int(os.environ.get("CALL_MAX_MINUTES", "15"))
+CALL_MAX_MINUTES = float(os.environ.get("CALL_MAX_MINUTES", "15"))
 
 
 def require(name: str) -> str:

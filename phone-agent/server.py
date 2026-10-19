@@ -1,4 +1,5 @@
-"""Phone agent server. Phase 2: the browser test line. Vobiz routes arrive in Phase 5."""
+"""Phone agent server. Phase 3: the browser test line with records, transfer and call
+housekeeping. Vobiz routes arrive in Phase 5."""
 import asyncio
 import os
 import uuid
@@ -47,11 +48,18 @@ async def test_ws(websocket: WebSocket):
     await websocket.accept()
     from pipecat.pipeline.runner import PipelineRunner
 
-    from call_pipeline import build_phone_pipeline
+    from call_pipeline import start_phone_call
     from phone_audio import BrowserPhoneSerializer
+    from post_call import record_call
 
     session_id = f"phone-test-{uuid.uuid4().hex}"
-    worker = build_phone_pipeline(
+    call = await start_phone_call(
         websocket, session_id, BrowserPhoneSerializer(), websocket.query_params.get("caller", "")
     )
-    await PipelineRunner().run(worker)
+    try:
+        await PipelineRunner().run(call.worker)
+    finally:
+        # After the call: structured record + Sheet row. Runs on its own so a slow
+        # extraction never holds the connection open.
+        asyncio.create_task(record_call(
+            session_id, call.role, call.caller_number, call.control.ended_by, call.control.transfer_to))
