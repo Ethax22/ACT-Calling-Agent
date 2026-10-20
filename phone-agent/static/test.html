@@ -49,12 +49,16 @@ registerProcessor('cap', Cap);`;
 
 async function startCall() {
   $('call').disabled = true; $('status').textContent = 'Connecting...';
-  micStream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
+  micStream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
   micCtx = new AudioContext({sampleRate: 16000}); playCtx = new AudioContext();
   const url = URL.createObjectURL(new Blob([WORKLET], {type: 'application/javascript'}));
   await micCtx.audioWorklet.addModule(url); URL.revokeObjectURL(url);
   const node = new AudioWorkletNode(micCtx, 'cap', {numberOfOutputs: 0});
-  micCtx.createMediaStreamSource(micStream).connect(node);
+  // The browser microphone came through about 8 times quieter than the bot (a recording, 2026-10-20),
+  // which made interruptions hard to detect: lift it, with a limiter so loud speech does not clip.
+  const gain = micCtx.createGain(); gain.gain.value = 3;
+  const limiter = micCtx.createDynamicsCompressor();
+  micCtx.createMediaStreamSource(micStream).connect(gain); gain.connect(limiter); limiter.connect(node);
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/test/ws?caller=${encodeURIComponent($('caller').value)}`);
   ws.binaryType = 'arraybuffer';
   node.port.onmessage = e => { if (ws.readyState === 1) ws.send(e.data); };
