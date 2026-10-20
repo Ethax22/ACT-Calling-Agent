@@ -68,12 +68,24 @@ async def main():
     async with aiohttp.ClientSession() as http:
         await dialog(http, "student-marks", "9000000003", [
             "Hi, I want to know my marks", "312825104001", "first January two thousand seven", "marks"])
+        await dialog(http, "tamil-attendance", "9000000001", [
+            "Tell me my attendance percentage.", "என்னோட ரெஜிஸ்டர் நம்பர் வந்து 312823104004.", "ஆமா",
+            "என்னோட டேட் ஆஃப் பர்த் வந்து ஏப்ரல் 12, 2005."])
+        await dialog(http, "parent-attendance", "9000000002", [
+            "I want to know my daughter's attendance", "312823104004", "yes", "twelfth April two thousand five"])
+        # Last of the records dialogs: three wrong tries lock caller 9000000001 for an hour.
         await dialog(http, "wrong-dob", "9000000001", [
             "Tell me my attendance", "312823104004", "first January two thousand", "attendance",
             "12-05-2005", "312823104004", "03-03-2003"])
         await dialog(http, "unknown-caller", "9111111111", ["Can you tell me my son's marks?"])
         await dialog(http, "faculty", "9000000004", ["Which students in my class are below seventy five percent attendance?"])
         await dialog(http, "transfer", "9111111111", ["I want to talk to someone in admissions about fees"])
+        await dialog(http, "office-open-now", "9111111111", ["Is the college office open right now?"])
+        # Writes a real row to the leads Sheet (source phone); delete it afterwards.
+        if os.environ.get("LIVE_LEAD_TEST") == "1":
+            await dialog(http, "lead-phone", "9111111111", [
+                "I'm interested in joining computer science", "My name is Local Test Delete and my number is 9876543210",
+                "yes that's right"])
         await dialog(http, "wrapping-up", "9111111111", ["What courses do you offer?", "Okay, thank you, that's all."])
 
 

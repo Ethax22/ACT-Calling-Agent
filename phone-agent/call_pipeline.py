@@ -23,6 +23,7 @@ class PhoneCall:
 async def start_phone_call(websocket, session_id: str, serializer, caller_number: str = "") -> PhoneCall:
     from pipeline import PipelineProfile, build_pipeline
 
+    from background_sound import make_mixer
     from call_control import NUDGE_SECS, CallControl
     from erp_client import ErpClient
     from tools import TOOLS, make_handlers
@@ -44,6 +45,7 @@ async def start_phone_call(websocket, session_id: str, serializer, caller_number
         function_handlers=make_handlers(erp, control, caller_number),
         user_idle_timeout=NUDGE_SECS,
         on_built=control.attach,
+        audio_out_mixer=make_mixer(),  # quiet office under the call, unless PHONE_BACKGROUND=off
     )
     worker = build_pipeline(websocket, "en", session_id, profile)
     return PhoneCall(worker, control, caller_number, role, first_name)

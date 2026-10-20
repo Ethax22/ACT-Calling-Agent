@@ -60,6 +60,7 @@ def test_records_tools_pass_the_erp_speech_through_with_the_callers_number():
     erp, control = FakeErp(), _control()
     handlers = tools.make_handlers(erp, control, "9000000001")
     p, got = _params({"reg_no": "312823104004", "date_of_birth": "12-04-2005", "topic": "marks"})
+    p.context = SimpleNamespace(messages=[{"role": "user", "content": "312823104004 and 12-04-2005"}])
     asyncio.run(handlers["get_student_report"](p))
     assert got["result"]["speech"].startswith("For Abinaya")
     assert erp.calls[0][1][0] == "9000000001" and erp.calls[0][1][1] == "312823104004"
@@ -140,3 +141,61 @@ def test_post_call_record_is_clamped_to_the_allowed_values():
                             "lead_phone": "98765 43210", "call_summary": "x", "language_used": "TAMIL"})
     assert rec["admission_interest"] == "unclear" and rec["call_disposition"] == "answered"
     assert rec["caller_type"] == "other" and rec["lead_phone"] == "9876543210" and rec["language_used"] == "tamil"
+
+
+def test_background_sound_loops_cleanly_and_stays_quiet(monkeypatch, tmp_path):
+    import numpy as np
+
+    import background_sound as bg
+
+    sound = bg.make_office_murmur(seconds=4)
+    assert len(sound) == 4 * bg.RATE and np.max(np.abs(sound)) <= 0.5001
+    assert abs(float(sound[-1]) - float(sound[0])) < 0.05  # no click where it loops
+    assert 0.02 < float(np.sqrt(np.mean(sound ** 2))) < 0.3
+
+    monkeypatch.setattr(bg, "CACHE", tmp_path / "office.wav")
+    monkeypatch.delenv("PHONE_BACKGROUND_FILE", raising=False)
+    monkeypatch.setenv("PHONE_BACKGROUND", "off")
+    assert bg.make_mixer() is None
+    monkeypatch.setenv("PHONE_BACKGROUND", "quiet_office")
+    mixer = bg.make_mixer()
+    assert mixer is not None and (tmp_path / "office.wav").exists()
+
+
+def test_the_records_tool_refuses_a_date_of_birth_the_caller_never_said():
+    ctx = lambda *texts: SimpleNamespace(messages=[{"role": "user", "content": t} for t in texts])
+    assert tools.missing_record_detail(ctx("tell me my attendance")) == "register number"
+    assert tools.missing_record_detail(ctx("my register number is 312823104004")) == "date of birth"
+    assert tools.missing_record_detail(ctx("312823104004", "April 12, 2005")) is None
+    assert tools.missing_record_detail(ctx("312823104004", "ஏப்ரல் 12, 2005")) is None
+    assert tools.missing_record_detail(ctx("312823104004", "12-04-2005")) is None
+
+    erp, control = FakeErp(), _control()
+    handlers = tools.make_handlers(erp, control, "9000000001")
+    p, got = _params({"reg_no": "312823104004", "date_of_birth": "01-01-2000", "topic": "attendance"})
+    p.context = ctx("my register number is 312823104004")
+    asyncio.run(handlers["get_student_report"](p))
+    assert got["result"]["status"] == "need_details" and erp.calls == []   # the ERP was never asked
+
+
+def test_the_date_of_birth_is_read_from_the_callers_words_day_first():
+    ctx = lambda *texts: SimpleNamespace(messages=[{"role": "user", "content": t} for t in texts])
+    said = tools.date_the_caller_said
+    assert said(ctx("என்னோட டேட் ஆஃப் பர்த் வந்து ஏப்ரல் 12, 2005.")) == "12-04-2005"   # the failed real call
+    assert said(ctx("April 12, 2005")) == "12-04-2005"
+    assert said(ctx("12th April 2005")) == "12-04-2005"
+    assert said(ctx("12 ஏப்ரல் 2005")) == "12-04-2005"
+    assert said(ctx("1st January 2007")) == "01-01-2007"
+    assert said(ctx("12-04-2005")) == "12-04-2005" and said(ctx("12/4/2005")) == "12-04-2005"
+    assert said(ctx("my number is 312823104004")) is None
+    assert said(ctx("12 April 2005", "no wait, 3 March 2004")) == "03-03-2004"           # the latest date wins
+
+
+def test_the_handler_sends_the_callers_date_even_when_the_model_swapped_day_and_month():
+    erp, control = FakeErp(), _control()
+    handlers = tools.make_handlers(erp, control, "9000000001")
+    p, got = _params({"reg_no": "312823104004", "date_of_birth": "04-12-2005", "topic": "attendance"})
+    p.context = SimpleNamespace(messages=[{"role": "user", "content": "312823104004"},
+                                          {"role": "user", "content": "ஏப்ரல் 12, 2005"}])
+    asyncio.run(handlers["get_student_report"](p))
+    assert erp.calls[0][1][2] == "12-04-2005"
