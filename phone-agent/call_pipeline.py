@@ -11,6 +11,16 @@ from prompts import GREETING
 STT_RATE = int(os.environ.get("PHONE_STT_RATE", "8000"))
 
 
+# Sarvam's recogniser language for the whole call. "auto" lets it hear Tamil or English as
+# spoken. Measured 2026-10-20 (one scenario at a time, synthetic caller): with the call locked
+# to English, Tamil spoken first came out as an English sentence 6 times out of 6 ("How to apply
+# for citizenship?" for a question about admission) and the bot answered in English; with auto,
+# 5 of 6 came out as Tamil and English was unchanged. PHONE_STT_LANGUAGE=locked brings the old
+# behaviour back (English at the start, switched by the router after the first Tamil turn).
+_stt = os.environ.get("PHONE_STT_LANGUAGE", "auto").strip().lower()
+STT_LANGUAGE = None if _stt in ("locked", "") else _stt
+
+
 @dataclass
 class PhoneCall:
     worker: object
@@ -45,6 +55,7 @@ async def start_phone_call(websocket, session_id: str, serializer, caller_number
         function_handlers=make_handlers(erp, control, caller_number),
         user_idle_timeout=NUDGE_SECS,
         on_built=control.attach,
+        stt_language_code=STT_LANGUAGE,
         audio_out_mixer=make_mixer(),  # quiet office under the call, unless PHONE_BACKGROUND=off
     )
     worker = build_pipeline(websocket, "en", session_id, profile)

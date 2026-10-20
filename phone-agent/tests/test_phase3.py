@@ -199,3 +199,16 @@ def test_the_handler_sends_the_callers_date_even_when_the_model_swapped_day_and_
                                           {"role": "user", "content": "ஏப்ரல் 12, 2005"}])
     asyncio.run(handlers["get_student_report"](p))
     assert erp.calls[0][1][2] == "12-04-2005"
+
+
+def test_numbers_spoken_as_words_count_as_said():
+    """The failed call of 2026-10-20: English-mode recognition wrote the register number and the
+    date of birth as words, and the guard refused the tool because it saw no digits."""
+    ctx = lambda *texts: SimpleNamespace(messages=[{"role": "user", "content": t} for t in texts])
+    said = ctx("My register number is three one two eight two three one zero four double zero four.",
+               "My date of birth is twelve April two thousand five.")
+    assert tools.missing_record_detail(said) is None
+    assert tools.date_the_caller_said(said) == "12-04-2005"
+    assert tools.date_the_caller_said(ctx("first January two thousand seven")) == "01-01-2007"
+    assert tools.date_the_caller_said(ctx("twenty first of May two thousand and six")) == "21-05-2006"
+    assert tools.missing_record_detail(ctx("one moment please")) == "register number"

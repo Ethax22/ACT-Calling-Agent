@@ -103,8 +103,8 @@ async def main():
                   f"total bot audio {audio_seconds(call):.1f}s")
         elif a.check == "records":
             await say(http, call, "I would like to know my marks please.", wait_reply=True)
-            await say(http, call, "three one two eight two five one zero four zero zero one", wait_reply=True)
-            await say(http, call, "first January two thousand seven", wait_reply=True)
+            await say(http, call, "My register number is three one two eight two five one zero four double zero one", wait_reply=True)
+            await say(http, call, "My date of birth is first January two thousand seven", wait_reply=True)
             print(f"total bot audio {audio_seconds(call):.1f}s")
         await call.close()
         await asyncio.sleep(2)

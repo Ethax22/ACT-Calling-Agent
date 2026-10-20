@@ -13,6 +13,8 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
 
+from spoken_numbers import normalize_spoken_numbers
+
 # Same patterns as rag-backend/main.py (_DATE_LIKE, _LONG_NUMBER): what counts as the caller having
 # said a date of birth and a register number.
 _DATE_LIKE = re.compile(
@@ -27,6 +29,7 @@ def missing_record_detail(context) -> str | None:
     tool with a date of birth it had made up, which counted as a failed try."""
     said = " ".join(m.get("content") or "" for m in context.messages
                     if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), str))
+    said = normalize_spoken_numbers(said)  # English-mode recognition writes numbers as words
     if not _LONG_NUMBER.search(said):
         return "register number"
     if not _DATE_LIKE.search(said):
@@ -53,6 +56,7 @@ def date_the_caller_said(context) -> str | None:
         text = m.get("content") if isinstance(m, dict) and m.get("role") == "user" else None
         if not isinstance(text, str):
             continue
+        text = normalize_spoken_numbers(text)
         for rx, order in ((_D_MONTH_Y, "dmy"), (_MONTH_D_Y, "mdy"), (_DMY_NUMERIC, "num")):
             hit = rx.search(text)
             if not hit:

@@ -19,6 +19,19 @@ TEST_PAGE_ENABLED = os.environ.get("ENABLE_TEST_PAGE", "1") == "1"
 STATIC = Path(__file__).parent / "static"
 
 
+def _warm_up():
+    """Import what a call imports, and load the turn-taking models, before the first call."""
+    import call_control, call_pipeline, erp_client, phone_audio, post_call, tools  # noqa: F401
+    import background_sound  # noqa: F401
+    import conversation_router, latency_metrics, pipeline, speech_text_filter  # noqa: F401
+    import pipecat.processors.audio.audio_buffer_processor  # noqa: F401
+    import pipecat.services.cartesia.tts, pipecat.services.openai.llm, pipecat.services.sarvam.stt  # noqa: F401
+    import pipecat.transports.websocket.fastapi  # noqa: F401
+    from turn_taking import build_user_aggregator_params
+
+    build_user_aggregator_params("en")
+
+
 @app.on_event("startup")
 async def _startup():
     import greeting_cache
@@ -26,6 +39,9 @@ async def _startup():
 
     prune_old_logs()  # 90-day retention, shared with the website's call logs
     asyncio.create_task(greeting_cache.ensure_rendered("en", GREETING))
+    # Load the turn-taking models now: the first call after a restart waited about 4 s for
+    # them (2026-10-20, seen in a recording: the greeting began 5 s after the call opened).
+    await asyncio.to_thread(_warm_up)
 
 
 @app.get("/health")
