@@ -98,9 +98,17 @@ async def test_ws(websocket: WebSocket):
     from phone_audio import BrowserPhoneSerializer
     from post_call import record_call
 
+    q = websocket.query_params
+    lead = None
+    if q.get("direction") == "outbound":  # the page plays a lead the college is calling back
+        from prompts import Lead
+
+        clip = lambda k, n=60: (q.get(k) or "").strip()[:n]
+        lead = Lead(name=clip("lead_name", 40), course=clip("lead_course"), source=clip("enquiry_source"),
+                    date=clip("enquiry_date", 20), phone=clip("caller", 15))
     session_id = f"phone-test-{uuid.uuid4().hex}"
     call = await start_phone_call(
-        websocket, session_id, BrowserPhoneSerializer(), websocket.query_params.get("caller", ""), live_view=True
+        websocket, session_id, BrowserPhoneSerializer(), q.get("caller", ""), live_view=True, lead=lead
     )
     try:
         await PipelineRunner().run(call.worker)
@@ -109,7 +117,9 @@ async def test_ws(websocket: WebSocket):
             write_meta(session_id, started_at=call.started_at, caller_number=call.caller_number, role=call.role,
                        ended_by=call.control.ended_by, transfer_to=call.control.transfer_to,
                        response_times=call.live.response_times if call.live else None,
-                       user_turns=call.live.user_turns if call.live else 0)
+                       user_turns=call.live.user_turns if call.live else 0,
+                       direction=call.direction, lead=call.lead,
+                       language_changes=call.live.language_changes if call.live else None)
         except Exception:
             from loguru import logger
 
@@ -117,4 +127,5 @@ async def test_ws(websocket: WebSocket):
         # After the call: structured record + Sheet row. Runs on its own so a slow
         # extraction never holds the connection open.
         asyncio.create_task(record_call(
-            session_id, call.role, call.caller_number, call.control.ended_by, call.control.transfer_to))
+            session_id, call.role, call.caller_number, call.control.ended_by, call.control.transfer_to,
+            direction=call.direction, lead=call.lead))

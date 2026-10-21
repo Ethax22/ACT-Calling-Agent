@@ -200,7 +200,7 @@ def test_post_call_caller_type_comes_from_the_identified_role(monkeypatch, tmp_p
     monkeypatch.setattr(post_call, "_transcript_path", lambda s: t)
     monkeypatch.setattr(post_call, "_append_sheet", lambda row: False)
 
-    async def extract(messages):
+    async def extract(messages, prompt=None):
         return {"caller_type": "current_student", "call_disposition": "answered"}
 
     monkeypatch.setattr(post_call, "_extract", extract)

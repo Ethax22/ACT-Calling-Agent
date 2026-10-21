@@ -51,8 +51,8 @@ class PhoneCall(h.Call):
         self.closed_at = self.now()
 
 
-async def open_call(url, caller):
-    ws = await websockets.connect(f"{url}/test/ws?caller={caller}", max_size=None)
+async def open_call(url, caller, extra=""):
+    ws = await websockets.connect(f"{url}/test/ws?caller={caller}{extra}", max_size=None)
     return PhoneCall(ws)
 
 
@@ -82,7 +82,9 @@ async def main():
     a = ap.parse_args()
     async with aiohttp.ClientSession() as http:
         caller = "9000000003" if a.check == "records" else "9111111111"
-        call = await open_call(a.url, caller)
+        extra = ("&direction=outbound&lead_name=Ravi&lead_course=B.E.%20Computer%20Science"
+                 "&enquiry_source=our%20website&enquiry_date=recently") if a.check.startswith("outbound") else ""
+        call = await open_call(a.url, "9876543210" if extra else caller, extra)
         await call.wait_until_quiet()
         print(f"greeting played: {audio_seconds(call):.1f}s of audio")
         if a.check == "end-call":
@@ -101,6 +103,15 @@ async def main():
             closed = await wait_closed(call, 70)
             print(f"call closed by server: {closed is not None} at {closed and round(closed, 1)}s; "
                   f"total bot audio {audio_seconds(call):.1f}s")
+        elif a.check == "outbound-voicemail":  # the "lead" is a voicemail greeting
+            await say(http, call, "The person you are calling is not available. Please leave your message after the tone.")
+            closed = await wait_closed(call, 40)
+            print(f"call closed by server: {closed is not None}; total bot audio {audio_seconds(call):.1f}s")
+        elif a.check == "outbound-talk":
+            await say(http, call, "Yes, this is Ravi. Do you have hostel facilities?", wait_reply=True)
+            await say(http, call, "Okay, thank you. Bye.")
+            closed = await wait_closed(call, 30)
+            print(f"call closed by server: {closed is not None}")
         elif a.check == "records":
             await say(http, call, "I would like to know my marks please.", wait_reply=True)
             await say(http, call, "My register number is three one two eight two five one zero four double zero one", wait_reply=True)

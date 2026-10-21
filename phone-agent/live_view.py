@@ -66,6 +66,9 @@ class LiveView(BaseObserver):
         self._bot_speaking = False
         self._seen = deque(maxlen=512)     # frame ids, in case a frame is reported twice
         self._tool_events: set[tuple[str, str]] = set()  # tool frames travel both ways: one card each
+        self.router = None                 # the call's ConversationRouter, to notice a language change
+        self._language = "en"
+        self.language_changes: list[dict] = []  # saved with the call: {"after_user_turn": n, "language": "ta"}
 
     async def send(self, message: dict) -> None:
         if self.worker:
@@ -83,6 +86,8 @@ class LiveView(BaseObserver):
         if isinstance(frame, OutputTransportMessageUrgentFrame) or frame.id in self._seen:
             return
         self._seen.append(frame.id)
+        if isinstance(frame, (LLMFullResponseStartFrame, TTSSpeakFrame)):
+            await self._check_language()
         msg = self._message_for(frame)
         if msg and msg["type"] in ("tool_call", "tool_result"):
             key = (msg["type"], msg["id"])
@@ -91,6 +96,14 @@ class LiveView(BaseObserver):
             self._tool_events.add(key)
         if msg:
             await self.send(msg)
+
+    async def _check_language(self) -> None:
+        """Before each bot reply: has the call switched language since the last one?"""
+        language = getattr(self.router, "language", None)
+        if language and language != self._language:
+            self._language = language
+            self.language_changes.append({"after_user_turn": self.user_turns, "language": language})
+            await self.send({"type": "language", "language": language})
 
     def _message_for(self, frame) -> dict | None:
         from greeting_cache import PlayGreetingFrame

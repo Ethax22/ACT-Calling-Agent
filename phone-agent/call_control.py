@@ -21,6 +21,17 @@ GOODBYE = {
     "en": "Thank you for calling Agni College of Technology. Have a good day.",
     "ta": "Agni College of Technology-ஐ அழைத்ததற்கு நன்றி. நல்ல நாளாக அமையட்டும்.",
 }
+# Outbound (we called them): one short nudge after 20 s, then end (Indus outbound settings,
+# with "Hey" changed to "Hello" per Calling_Agent_Outbound_Indus_Changes.md).
+OUTBOUND_NUDGE_SECS = float(os.environ.get("OUTBOUND_NUDGE_SECS", "20"))
+OUTBOUND_NUDGE = {
+    "en": "Hello, are you still there?",
+    "ta": "ஹலோ, நீங்க இன்னும் லைன்ல இருக்கீங்களா?",
+}
+OUTBOUND_GOODBYE = {
+    "en": "We will try again later. Thank you, goodbye.",
+    "ta": "பிறகு மறுபடியும் அழைக்கிறோம். நன்றி, வணக்கம்.",
+}
 TIME_LIMIT = {
     "en": "We have reached the time limit for this call. Thank you for calling Agni College of Technology. Goodbye.",
     "ta": "இந்த அழைப்பின் நேர வரம்பை எட்டிவிட்டோம். Agni College of Technology-ஐ அழைத்ததற்கு நன்றி. வணக்கம்.",
@@ -28,13 +39,14 @@ TIME_LIMIT = {
 
 
 class CallControl:
-    def __init__(self, erp, max_secs: float):
+    def __init__(self, erp, max_secs: float, outbound: bool = False):
         self._erp = erp
         self._max_secs = max_secs
+        self._nudge, self._goodbye = (OUTBOUND_NUDGE, OUTBOUND_GOODBYE) if outbound else (NUDGE, GOODBYE)
         self._ns = None
         self._idle = 0
         self._cap_task = None
-        self.ended_by = ""            # why the call ended from our side: end_call, idle, time_limit, transfer
+        self.ended_by = ""            # why the call ended from our side: end_call, idle, time_limit, transfer, voicemail
         self.transfer_to = None       # (department, number) once a transfer was asked for
         self.on_end = None            # async callback(reason): the test page's live view
 
@@ -49,15 +61,18 @@ class CallControl:
     def _lang(self) -> str:
         return "ta" if self._ns.router.language == "ta" else "en"
 
+    def language(self) -> str:
+        return self._lang() if self._ns else "en"
+
     async def _on_user_started(self, *_):
         self._idle = 0
 
     async def _on_idle(self, *_):
         self._idle += 1
         if self._idle == 1:
-            await self._ns.worker.queue_frames([TTSSpeakFrame(NUDGE[self._lang()])])
+            await self._ns.worker.queue_frames([TTSSpeakFrame(self._nudge[self._lang()])])
         else:
-            await self.say_and_end(GOODBYE[self._lang()], "idle")
+            await self.say_and_end(self._goodbye[self._lang()], "idle")
 
     async def _cap(self):
         await asyncio.sleep(self._max_secs)

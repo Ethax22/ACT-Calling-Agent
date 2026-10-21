@@ -149,6 +149,31 @@ TOOLS = ToolsSchema(standard_tools=[
 ])
 
 
+# Outbound calls (a lead called back): no records tools; transfer goes to admissions, and
+# leave_voicemail stands in for Indus's "Handle Voicemail".
+_by_name = {t.name: t for t in TOOLS.standard_tools}
+OUTBOUND_TOOLS = ToolsSchema(standard_tools=[
+    FunctionSchema(
+        name="transfer_call",
+        description="Hand the call to the admissions team. Give the one short line to say first.",
+        properties={
+            "department": {"type": "string", "enum": ["admissions"]},
+            "line": _by_name["transfer_call"].properties["line"],
+        },
+        required=["department", "line"],
+    ),
+    _by_name["end_call"],
+    FunctionSchema(
+        name="leave_voicemail",
+        description="Call this at once when the call reached voicemail, an answering machine or a network "
+                    "announcement (\"leave a message after the tone\", \"the number you have called is not available\"). "
+                    "A short message is left and the call ends.",
+        properties={},
+        required=[],
+    ),
+])
+
+
 def make_handlers(erp, control, caller_number: str) -> dict:
     async def get_student_report(params: FunctionCallParams):
         a = params.arguments
@@ -199,5 +224,13 @@ def make_handlers(erp, control, caller_number: str) -> dict:
         await params.result_callback({"status": "ok"}, properties=FunctionCallResultProperties(run_llm=False))
         await control.say_and_end(str(params.arguments.get("goodbye", "")), "end_call")
 
+    async def leave_voicemail(params: FunctionCallParams):
+        from pipecat.frames.frames import FunctionCallResultProperties
+
+        from prompts import voicemail_message
+
+        await params.result_callback({"status": "ok"}, properties=FunctionCallResultProperties(run_llm=False))
+        await control.say_and_end(voicemail_message(control.language()), "voicemail")
+
     return {"get_student_report": get_student_report, "get_class_summary": get_class_summary,
-            "transfer_call": transfer_call, "end_call": end_call}
+            "transfer_call": transfer_call, "end_call": end_call, "leave_voicemail": leave_voicemail}

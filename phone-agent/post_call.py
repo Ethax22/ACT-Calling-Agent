@@ -40,13 +40,38 @@ Answer with one JSON object only, with exactly these keys:
 - lead_phone: the phone number the caller gave, digits only, else empty.
 Use empty strings for anything not in the call. Do not invent details."""
 
+# Outbound (a lead called back): the Indus outbound agent's output variables
+# (docs/Calling_Agent_Outbound_Config.md section 5); language_used gains "tanglish" per the
+# 2026-10-09 changes. Success = call_outcome visit_booked.
+OUTBOUND_FIELDS = {
+    "call_outcome": ("interested", "visit_booked", "callback_requested", "not_interested", "wrong_number",
+                     "voicemail", "no_answer", "transferred"),
+    "interest_level": ("high", "medium", "low", "none", "unclear"),
+    "visit_date": None,
+    "callback_time": None,
+    "do_not_call": ("no", "yes"),
+    "language_used": ("english", "tamil", "tanglish"),
+    "call_summary": None,
+}
+
+OUTBOUND_PROMPT = """You read the transcript of an OUTBOUND phone call: Agni College of Technology called back a person who had enquired about admissions. Fill in a record.
+Answer with one JSON object only, with exactly these keys:
+- call_outcome: one of interested, visit_booked, callback_requested, not_interested, wrong_number, voicemail, no_answer, transferred. The single primary outcome. visit_booked only if they agreed a day for a campus visit or an admissions call.
+- interest_level: one of high, medium, low, none, unclear. How interested is the person in joining the college?
+- visit_date: the campus visit or admissions-call day and time they agreed to, as they said it, else empty.
+- callback_time: when they asked to be called back, else empty.
+- do_not_call: yes only if they asked not to be called again, to be removed, or said they are not interested; else no.
+- language_used: one of english, tamil, tanglish (Tamil and English mixed). The person's main language.
+- call_summary: one or two sentences, including their questions.
+Use empty strings for anything not in the call. Do not invent details."""
+
 _IST = timezone(timedelta(hours=5, minutes=30))
 SHEET_COLUMNS = ["timestamp_ist", "session_id", "caller_role", "caller_number", "ended_by", "transferred_to", *FIELDS]
 
 
-def _clean(raw: dict) -> dict:
+def _clean(raw: dict, fields: dict | None = None) -> dict:
     out = {}
-    for key, allowed in FIELDS.items():
+    for key, allowed in (fields or FIELDS).items():
         value = str(raw.get(key, "") or "").strip()
         if allowed:
             value = value.lower() if value.lower() in allowed else ("unclear" if "unclear" in allowed else "other" if "other" in allowed else allowed[0])
@@ -63,7 +88,7 @@ def _transcript_path(session_id: str):
     return found[-1] if found else None
 
 
-async def _extract(messages: list[dict]) -> dict | None:
+async def _extract(messages: list[dict], prompt: str = PROMPT) -> dict | None:
     from openai import AsyncOpenAI
 
     text = "\n".join(f"{m['role']}: {m['content']}" for m in messages if m.get("role") in ("user", "assistant") and m.get("content"))
@@ -72,7 +97,7 @@ async def _extract(messages: list[dict]) -> dict | None:
     client = AsyncOpenAI(api_key=os.environ["SARVAM_API_KEY"], base_url="https://api.sarvam.ai/v1")
     r = await client.chat.completions.create(
         model="sarvam-105b", temperature=0, extra_body={"reasoning_effort": None},
-        messages=[{"role": "system", "content": PROMPT}, {"role": "user", "content": text}],
+        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": text}],
     )
     return json.loads(re.search(r"\{.*\}", r.choices[0].message.content or "", re.S).group())
 
@@ -97,24 +122,37 @@ def _append_sheet(row: list) -> bool:
     return True
 
 
-async def record_call(session_id: str, role: str, caller_number: str, ended_by: str, transfer_to) -> dict | None:
+async def record_call(session_id: str, role: str, caller_number: str, ended_by: str, transfer_to,
+                      direction: str = "inbound", lead=None) -> dict | None:
     """Never raises: a failure here must not touch the call or its transcript."""
+    outbound = direction == "outbound"
     try:
         path = _transcript_path(session_id)
         if not path:
             logger.warning(f"[post-call] no transcript for {session_id}")
             return None
         messages = json.loads(path.read_text(encoding="utf-8")).get("messages", [])
-        raw = await _extract(messages)
+        raw = await _extract(messages, OUTBOUND_PROMPT if outbound else PROMPT)
         if raw is None:
             return None
-        record = _clean(raw)
-        # The number already told us who called; the model labelled a faculty caller a
-        # "current_student" (2026-10-21) from the transcript alone.
-        known = {"student": "current_student", "parent": "parent", "faculty": "faculty"}.get(role)
-        if known:
-            record["caller_type"] = known
-        if transfer_to:
+        record = _clean(raw, OUTBOUND_FIELDS if outbound else FIELDS)
+        if outbound:
+            # What the call itself knows beats the model's reading of the transcript.
+            if ended_by == "voicemail":
+                record["call_outcome"] = "voicemail"
+            elif transfer_to:
+                record["call_outcome"] = "transferred"
+            record["direction"] = "outbound"
+            if lead is not None:
+                record.update({"lead_name": lead.name, "lead_course": lead.course,
+                               "enquiry_source": lead.source, "enquiry_date": lead.date})
+        else:
+            # The number already told us who called; the model labelled a faculty caller a
+            # "current_student" (2026-10-21) from the transcript alone.
+            known = {"student": "current_student", "parent": "parent", "faculty": "faculty"}.get(role)
+            if known:
+                record["caller_type"] = known
+        if transfer_to and not outbound:
             record["call_disposition"] = "transferred"
         record.update({
             "session_id": session_id, "caller_role": role, "ended_by": ended_by,
@@ -123,8 +161,10 @@ async def record_call(session_id: str, role: str, caller_number: str, ended_by: 
             "timestamp_ist": datetime.now(_IST).strftime("%Y-%m-%d %H:%M:%S"),
         })
         path.with_name("call_record.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-        wrote = await asyncio.to_thread(_append_sheet, [record.get(c, "") for c in SHEET_COLUMNS])
-        logger.info(f"[post-call] {session_id[:16]} disposition={record['call_disposition']} sheet={'yes' if wrote else 'no'}")
+        # Outbound results stay with the call and its campaign; the Sheet's Calls tab is inbound only.
+        wrote = False if outbound else await asyncio.to_thread(_append_sheet, [record.get(c, "") for c in SHEET_COLUMNS])
+        outcome = record.get("call_outcome") if outbound else record.get("call_disposition")
+        logger.info(f"[post-call] {session_id[:16]} {direction} outcome={outcome} sheet={'yes' if wrote else 'no'}")
         return record
     except Exception:
         logger.exception("[post-call] failed")

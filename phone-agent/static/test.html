@@ -37,6 +37,17 @@ main{padding:24px;max-width:1180px;margin:0 auto}
 .caller{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-right:6px}
 .caller input{width:9.5rem;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:var(--soft);font-size:14px;color:var(--ink)}
 .caller input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.mode{display:flex;gap:2px;background:var(--soft);padding:3px;border-radius:999px;margin-right:4px}
+.mode button{padding:4px 12px;border-radius:999px;font-size:13px;color:var(--muted);font-weight:500}
+.mode button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.lead{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:0 20px 14px;border-bottom:1px solid var(--line)}
+.lead label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.lead label{min-width:0}
+.lead input{padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--soft);font-size:14px;color:var(--ink);min-width:0;width:100%}
+.lead input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.lead .lead-note{grid-column:1/-1;margin:0;font-size:12px;color:var(--faint)}
+.chip.lang{color:#24519a;background:#e9f0fb;border-color:transparent;font-weight:500}
+.pill.dir{background:var(--soft);color:var(--ink)}
 .icon{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:var(--muted)}
 .icon:hover:not(:disabled){background:var(--soft);color:var(--ink)}
 .stream{flex:1;overflow-y:auto;padding:8px 20px 20px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth}
@@ -152,6 +163,7 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
   .agent{height:calc(100vh - 150px)}
   .caller span{display:none}.caller input{width:8rem}
   .grid{grid-template-columns:1fr}
+  .agent-head{flex-wrap:wrap}.lead{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 </style></head><body>
 <header class="top">
@@ -166,10 +178,18 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
       <div class="agent-head">
         <h1>Test Agent</h1>
         <div class="head-tools">
-          <label class="caller"><span>Caller</span><input id="caller" value="9000000001" inputmode="numeric" autocomplete="off"></label>
+          <div class="mode" id="mode" role="group" aria-label="Call type"><button data-dir="inbound" class="on">Inbound</button><button data-dir="outbound">Outbound</button></div>
+          <label class="caller"><span id="callerLabel">Caller</span><input id="caller" value="9000000001" inputmode="numeric" autocomplete="off"></label>
           <button class="icon" id="newCall" title="New call" aria-label="New call"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
           <button class="icon" id="toHistory" title="Call history" aria-label="Call history"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
         </div>
+      </div>
+      <div class="lead" id="leadForm" hidden>
+        <label>Lead name<input id="leadName" value="Ravi" autocomplete="off"></label>
+        <label>Course enquired<input id="leadCourse" value="B.E. Computer Science" autocomplete="off"></label>
+        <label>Enquired through<input id="leadSource" value="our website" autocomplete="off"></label>
+        <label>Enquiry date<input id="leadDate" value="recently" autocomplete="off"></label>
+        <p class="lead-note">You play the lead. The bot calls you with these details; empty fields use the Indus defaults ("there", "engineering", "our website", "recently").</p>
       </div>
       <div class="stream" id="stream">
         <div class="empty" id="empty">
@@ -199,8 +219,8 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
       <div class="table-head"><h1>Recent calls</h1><button class="btn" id="refresh">Refresh</button></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Call ID</th><th>Caller</th><th>Role</th><th>Duration</th><th>Started (IST)</th><th>How it ended</th><th style="text-align:right">Actions</th></tr></thead>
-          <tbody id="rows"><tr><td colspan="7" class="empty-row">Loading…</td></tr></tbody>
+          <thead><tr><th>Call ID</th><th>Type</th><th>Caller</th><th>Role</th><th>Duration</th><th>Started (IST)</th><th>How it ended</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="8" class="empty-row">Loading…</td></tr></tbody>
         </table>
       </div>
       <div class="pager">
@@ -244,7 +264,28 @@ const fmtDur = s => s == null ? '—' : `${Math.floor(s / 60)}m ${Math.round(s %
 const clock = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const maskCaller = c => c ? c.replace(/^X+/, '••••••') : '—';
 const HIDDEN = ['reg_no', 'date_of_birth', 'faculty_id'];
-const ENDED = {caller: 'Caller hung up', end_call: 'Agent ended the call', idle: 'Caller went quiet', time_limit: 'Time limit reached', transfer: 'Transferred'};
+const ENDED = {caller: 'Caller hung up', end_call: 'Agent ended the call', idle: 'Caller went quiet', time_limit: 'Time limit reached', transfer: 'Transferred', voicemail: 'Voicemail left'};
+const LANG = {en: 'English', ta: 'Tamil', ta_en: 'Tanglish'};
+
+/* ---------- inbound / outbound test call ---------- */
+let direction = 'inbound';
+document.querySelectorAll('#mode button').forEach(b => b.onclick = () => {
+  if (micCtx || ws) return;
+  direction = b.dataset.dir;
+  document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x === b));
+  $('leadForm').hidden = direction !== 'outbound';
+  $('callerLabel').textContent = direction === 'outbound' ? 'Lead phone' : 'Caller';
+  if (direction === 'outbound' && $('caller').value.startsWith('90000000')) $('caller').value = '9876543210';
+  if (direction === 'inbound' && $('caller').value === '9876543210') $('caller').value = '9000000001';
+});
+function callParams() {
+  const p = new URLSearchParams({caller: $('caller').value.trim()});
+  if (direction === 'outbound') {
+    p.set('direction', 'outbound'); p.set('lead_name', $('leadName').value.trim()); p.set('lead_course', $('leadCourse').value.trim());
+    p.set('enquiry_source', $('leadSource').value.trim()); p.set('enquiry_date', $('leadDate').value.trim());
+  }
+  return p.toString();
+}
 
 /* ---------- views ---------- */
 function showView(v) {
@@ -367,6 +408,8 @@ function onEvent(m) {
     const b = live.bot[m.rid]; if (b && !b.querySelector('.cut')) b.appendChild(el('span', 'cut', 'interrupted'));
   } else if (m.type === 'transfer') {
     addChip(box, `Transferring to ${m.department} · ${m.number}`, 'transfer');
+  } else if (m.type === 'language') {
+    addChip(box, `Language changed · ${LANG[m.language] || m.language}`, 'lang');
   } else if (m.type === 'ended') {
     ending = true; addChip(box, ENDED[m.reason] || 'Conversation ending', 'end');
   } else return;
@@ -375,7 +418,8 @@ function onEvent(m) {
 
 async function startCall() {
   resetStream(); sessionId = null; ending = false; muted = false;
-  $('callBtn').disabled = true; $('caller').disabled = true; $('state').textContent = 'Connecting…';
+  $('callBtn').disabled = true; $('caller').disabled = true; $('state').textContent = direction === 'outbound' ? 'Calling the lead…' : 'Connecting…';
+  document.querySelectorAll('#leadForm input').forEach(i => i.disabled = true);
   micStream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
   micCtx = new AudioContext({sampleRate: 16000}); playCtx = new AudioContext();
   playOut = playCtx.createGain(); botAnalyser = playCtx.createAnalyser(); botAnalyser.fftSize = 512;
@@ -389,12 +433,12 @@ async function startCall() {
   const limiter = micCtx.createDynamicsCompressor();
   micAnalyser = micCtx.createAnalyser(); micAnalyser.fftSize = 512;
   micCtx.createMediaStreamSource(micStream).connect(gain); gain.connect(limiter); limiter.connect(capNode); limiter.connect(micAnalyser);
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/test/ws?caller=${encodeURIComponent($('caller').value.trim())}`);
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/test/ws?${callParams()}`);
   ws.binaryType = 'arraybuffer';
   capNode.port.onmessage = e => { if (ws.readyState === 1) ws.send(e.data); };
   ws.onopen = () => {
     $('state').textContent = 'On the call'; $('callBtn').disabled = false; setCallButton(true); $('mute').disabled = false;
-    addChip(live.box, 'Conversation started'); $('empty').hidden = true;
+    addChip(live.box, direction === 'outbound' ? `Calling ${$('leadName').value.trim() || 'the lead'}` : 'Conversation started'); $('empty').hidden = true;
     startedAt = Date.now();
     timerId = setInterval(() => { $('timer').textContent = clock((Date.now() - startedAt) / 1000).padStart(5, '0'); }, 250);
     meterId = setInterval(drawMeter, 90);
@@ -414,6 +458,7 @@ function endCall(byUser) {
   micCtx = playCtx = micStream = ws = null; startedAt = 0;
   $('mute').disabled = true; $('mute').classList.remove('muted'); setCallButton(false);
   $('callBtn').disabled = false; $('caller').disabled = false; $('state').textContent = 'Idle';
+  document.querySelectorAll('#leadForm input').forEach(i => i.disabled = false);
   if (!hadCall) return;
   if (!ending) addChip(live.box, byUser ? 'You hung up' : 'Conversation ended', 'end');
   scrollDown(live.box);
@@ -457,13 +502,14 @@ async function loadCalls() {
   try {
     const r = await fetch(`/test/api/calls?page=${page}&per_page=${per()}`); const data = await r.json();
     total = data.total; rows.innerHTML = '';
-    if (!data.calls.length) rows.innerHTML = '<tr><td colspan="7" class="empty-row">No calls yet</td></tr>';
+    if (!data.calls.length) rows.innerHTML = '<tr><td colspan="8" class="empty-row">No calls yet</td></tr>';
     for (const c of data.calls) {
       const tr = el('tr');
       const idTd = el('td'); const idc = el('div', 'idcell'); idc.appendChild(el('span', null, c.id.replace('phone-test-', '').slice(0, 12) + '…'));
       const cp = el('button', 'mini'); cp.title = 'Copy call ID'; cp.innerHTML = $('copyId').innerHTML; cp.onclick = () => copy(c.id, cp);
       idc.appendChild(cp); idTd.appendChild(idc); tr.appendChild(idTd);
-      tr.appendChild(el('td', null, maskCaller(c.caller)));
+      const typ = el('td'); typ.appendChild(el('span', 'pill dir', c.direction === 'outbound' ? 'Outbound' : 'Inbound')); tr.appendChild(typ);
+      tr.appendChild(el('td', null, maskCaller(c.caller) + (c.lead_name ? ` · ${c.lead_name}` : '')));
       const role = el('td'); role.innerHTML = c.role ? `<span class="pill role ${c.role}">${c.role}</span>` : '<span class="dim">—</span>'; tr.appendChild(role);
       tr.appendChild(el('td', 'num', fmtDur(c.duration_s)));
       tr.appendChild(el('td', null, fmtDate(c.started_at)));
@@ -474,7 +520,7 @@ async function loadCalls() {
     const from = total ? (page - 1) * per() + 1 : 0;
     $('range').textContent = `${from}–${Math.min(page * per(), total)} of ${total}`;
     $('prev').disabled = page <= 1; $('next').disabled = page * per() >= total;
-  } catch (e) { rows.innerHTML = '<tr><td colspan="7" class="empty-row">Could not load calls</td></tr>'; }
+  } catch (e) { rows.innerHTML = '<tr><td colspan="8" class="empty-row">Could not load calls</td></tr>'; }
 }
 $('prev').onclick = () => { page--; loadCalls(); };
 $('next').onclick = () => { page++; loadCalls(); };
@@ -514,9 +560,14 @@ async function openDetails(id) {
 
 function renderTranscript(d) {
   const box = $('dTranscript'); box.innerHTML = '';
-  addChip(box, 'Conversation started');
-  const cards = {};
+  const lead = (d.meta || {}).lead;
+  addChip(box, d.direction === 'outbound' ? `Calling ${(lead && lead.name) || 'the lead'}` : 'Conversation started');
+  const cards = {}, changes = [...((d.meta || {}).language_changes || [])];
+  let userTurns = 0;
+  const langChip = () => { while (changes.length && changes[0].after_user_turn <= userTurns) { const c = changes.shift(); addChip(box, `Language changed · ${LANG[c.language] || c.language}`, 'lang'); } };
   for (const m of d.transcript) {
+    if (m.role === 'user' && m.content) userTurns++;
+    else if (m.role === 'assistant') langChip();
     if (m.role === 'assistant' && m.tool_calls) {
       for (const c of m.tool_calls) {
         let args = {}; try { args = JSON.parse((c.function || {}).arguments || '{}'); } catch (e) {}
@@ -545,7 +596,21 @@ function badge(text, cls) { const b = el('span', 'pill ' + (cls || ''), words(te
 function renderOverview(d) {
   const box = $('dOverview'); box.innerHTML = ''; const rec = d.record || {}, meta = d.meta || {};
   if (!d.record) box.appendChild(el('div', 'notice', 'No call record for this call. Records are made from 20 October 2026; older test calls have only the transcript and recording.'));
-  if (d.record) {
+  if (d.record && d.direction === 'outbound') {
+    const ev = section(box, 'Evaluation');
+    const out = rec.call_outcome, ocls = {visit_booked: 'ok', interested: 'ok', callback_requested: 'warn', transferred: 'warn', not_interested: 'bad', wrong_number: 'bad', voicemail: '', no_answer: ''}[out];
+    field(ev, 'Call goal (visit booked)', badge(out === 'visit_booked' ? 'achieved' : 'not achieved', out === 'visit_booked' ? 'ok' : 'bad'));
+    field(ev, 'Call outcome', badge(out, ocls));
+    field(ev, 'Interest level', badge(rec.interest_level, {high: 'ok', medium: 'warn', low: 'bad', none: 'bad'}[rec.interest_level]));
+    field(ev, 'Do not call', badge(rec.do_not_call, rec.do_not_call === 'yes' ? 'bad' : ''));
+    const ld = section(box, 'Lead');
+    const L = meta.lead || {};
+    field(ld, 'Lead name', L.name || rec.lead_name); field(ld, 'Course enquired', L.course || rec.lead_course);
+    field(ld, 'Enquired through', L.source || rec.enquiry_source); field(ld, 'Enquiry date', L.date || rec.enquiry_date);
+    field(ld, 'Visit date', rec.visit_date); field(ld, 'Callback time', rec.callback_time);
+    field(ld, 'Language used', words(rec.language_used));
+    field(ld, 'Call summary', rec.call_summary, true);
+  } else if (d.record) {
     const ev = section(box, 'Evaluation');
     const disp = rec.call_disposition, dcls = {answered: 'ok', lead_captured: 'ok', transferred: 'warn', unanswered_question: 'bad', abandoned: 'bad'}[disp];
     field(ev, 'Outcome', badge(disp, dcls));
@@ -567,7 +632,7 @@ function renderOverview(d) {
   field(info, 'Caller turns', meta.user_turns != null ? meta.user_turns : '');
   field(info, 'How it ended', ENDED[d.ended_by] || ''); field(info, 'Transferred to', d.transferred_to ? `${d.transferred_to}${meta.transfer_number ? ' · ' + meta.transfer_number : ''}` : '');
   field(info, 'Language', words(d.language)); field(info, 'Channel', meta.channel || 'browser test line');
-  field(info, 'Direction', meta.direction || 'inbound');
+  field(info, 'Direction', d.direction || 'inbound');
   field(info, 'Recording', d.audio ? `${d.audio.channels === 2 ? 'Two tracks (agent, caller)' : 'One mixed track'} · ${d.audio.sample_rate / 1000} kHz` : 'None');
 }
 

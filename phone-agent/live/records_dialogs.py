@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config  # noqa: F401,E402
 import aiohttp  # noqa: E402
 from erp_client import ErpClient  # noqa: E402
-from tools import TOOLS, _compact, caller_words_since_last_lookup, faculty_id_said  # noqa: E402
+from prompts import Lead, admissions_phone, outbound_greeting  # noqa: E402
+from tools import OUTBOUND_TOOLS, TOOLS, _compact, caller_words_since_last_lookup, faculty_id_said  # noqa: E402
 
 OPENAI_TOOLS = [{"type": "function", "function": f.to_default_dict()} for f in TOOLS.standard_tools]
 BACKEND = os.environ["RAG_BACKEND_PUBLIC_URL"].rstrip("/")
@@ -75,6 +76,62 @@ async def dialog(http, title, number, turns):
                     return
 
 
+async def outbound_dialog(http, title, turns, lead=None):
+    """The college calls a lead back: the greeting is already said, the person answers."""
+    lead = lead or Lead(name="Ravi", course="B.E. Computer Science", source="our website", date="recently")
+    tools_out = [{"type": "function", "function": f.to_default_dict()} for f in OUTBOUND_TOOLS.standard_tools]
+    headers = {"Authorization": f"Bearer {KEY}", "X-Source": "phone", "X-Session-Id": f"live-{title}-{os.getpid()}",
+               "X-Call-Direction": "outbound", "X-Lead-Name": lead.name, "X-Lead-Course": lead.course,
+               "X-Lead-Source": lead.source, "X-Lead-Date": lead.date, "X-Admissions-Phone": admissions_phone()}
+    greeting = outbound_greeting(lead)
+    print(f"\n=== {title}  (outbound to {lead.name or 'unnamed lead'})\nBOT:    {greeting}")
+    messages = [{"role": "assistant", "content": greeting}]
+    for said in turns:
+        print(f"LEAD:   {said}")
+        messages.append({"role": "user", "content": said})
+        for _ in range(2):
+            async with http.post(f"{BACKEND}/v1/chat/completions", headers=headers,
+                                 json={"model": "agni-ai", "messages": messages, "tools": tools_out}) as r:
+                msg = (await r.json())["choices"][0]["message"]
+            if msg.get("content"):
+                print(f"BOT:    {msg['content']}")
+            calls = msg.get("tool_calls") or []
+            messages.append({k: v for k, v in msg.items() if v is not None})
+            if not calls:
+                break
+            for c in calls:
+                print(f"TOOL:   {c['function']['name']}({c['function']['arguments']})")
+                if c["function"]["name"] in ("end_call", "transfer_call", "leave_voicemail"):
+                    return
+                messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps({"status": "ok"})})
+
+
+async def outbound_dialogs(http):
+    if os.environ.get("OUTBOUND_ONLY"):
+        names = os.environ["OUTBOUND_ONLY"].split(",")
+        if "visit" in names:
+            await outbound_dialog(http, "outbound-visit", [
+                "Yes, this is Ravi. Tell me.", "Yes, I am still interested.", "What is the fee for computer science?",
+                "Can I visit the campus on Saturday at 11?", "Okay thank you, bye."])
+        if "wrong" in names:
+            await outbound_dialog(http, "outbound-wrong-number", ["Ravi? No, wrong number."])
+        return
+    await outbound_dialog(http, "outbound-visit", [
+        "Yes, this is Ravi. Tell me.", "Yes, I am still interested.", "What is the fee for computer science?",
+        "Can I visit the campus on Saturday at 11?", "Okay thank you, bye."])
+    await outbound_dialog(http, "outbound-sunday", [
+        "Yes speaking", "I want to visit the campus this Sunday morning"])
+    await outbound_dialog(http, "outbound-not-now", ["I am busy now, call me tomorrow evening."])
+    await outbound_dialog(http, "outbound-stop", ["Please stop calling me."])
+    await outbound_dialog(http, "outbound-voicemail", [
+        "The person you are calling is not available. Please leave your message after the tone."])
+    await outbound_dialog(http, "outbound-wrong-number", ["Ravi? No, wrong number."])
+    await outbound_dialog(http, "outbound-tamil", [
+        "ஆமா, நான் ரவி தான் பேசுறேன்.", "ஹாஸ்டல் வசதி இருக்கா?"])
+    await outbound_dialog(http, "outbound-person", ["Can I talk to someone from admissions?"])
+    await outbound_dialog(http, "outbound-no-name", ["Yes, who is this?"], lead=Lead())
+
+
 async def faculty_dialogs(http):
     # FAC1001 (9000000004) has two classes: CSE 2023 A (attendance only in the data) and ECE 2025 A (marks only).
     await dialog(http, "faculty-two-classes", "9000000004", [
@@ -103,6 +160,9 @@ async def main():
     async with aiohttp.ClientSession() as http:
         if sys.argv[1:] == ["faculty"]:
             await faculty_dialogs(http)
+            return
+        if sys.argv[1:] == ["outbound"]:
+            await outbound_dialogs(http)
             return
         await dialog(http, "student-marks", "9000000003", [
             "Hi, I want to know my marks", "312825104001", "first January two thousand seven", "marks"])
