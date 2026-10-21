@@ -356,7 +356,7 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
     </div>
     <div class="subtabs" id="aTabs">
       <button data-t="overview" class="on">Overview</button><button data-t="connectivity">Connectivity</button><button data-t="engagement">Engagement</button>
-      <button data-t="tools">Tools</button><button data-t="goals">Goals</button><button data-t="group">Group by</button><button data-t="logs">Call logs</button>
+      <button data-t="tools">Tools</button><button data-t="goals">Goals</button><button data-t="sentiment">Sentiment</button><button data-t="group">Group by</button><button data-t="logs">Call logs</button>
     </div>
     <div id="aBody"><div class="empty-row">Loading…</div></div>
   </section>
@@ -896,6 +896,16 @@ function renderOverview(d) {
     field(cd, 'Lead name', rec.lead_name); field(cd, 'Lead phone', rec.lead_phone);
     field(cd, 'Lead course', rec.lead_course, true);
     field(cd, 'Call summary', rec.call_summary, true);
+  }
+  if (d.sentiment) {  // Sarvam 105B's reading of the caller's side (sentiment.py); not checked by hand
+    const s = d.sentiment, se = section(box, 'Sentiment');
+    field(se, 'Sentiment', badge(s.sentiment, {positive: 'ok', negative: 'bad'}[s.sentiment]));
+    field(se, 'Mood start to end', badge(s.trend, {improved: 'ok', worsened: 'bad'}[s.trend]));
+    field(se, 'Admission interest', badge(s.admission_interest, {high: 'ok', medium: 'warn'}[s.admission_interest]));
+    field(se, 'Frustrated', s.frustrated ? badge('yes', 'bad') : 'no');
+    if (s.frustrated) field(se, 'Why', s.frustration_reason, true);
+    field(se, 'Topics', (s.topics || []).join(', '), true);
+    field(se, 'Questions not answered', (s.unanswered || []).join(' · '), true);
   }
   const info = section(box, 'Interaction info');
   field(info, 'Call ID', d.id, true);

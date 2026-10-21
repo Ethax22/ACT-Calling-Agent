@@ -1,5 +1,5 @@
 /* Agent Analytics tab of the phone test page: Overview, Connectivity, Engagement, Tools,
-   Goals, Group by and Call logs for the inbound or outbound agent (modelled on Indus Agent
+   Goals, Sentiment, Group by and Call logs for the inbound or outbound agent (modelled on Indus Agent
    Analytics). Data: GET /test/api/analytics (analytics.py, which also documents every
    definition). Charts are plain SVG with hover tooltips; colours are the dataviz reference
    palette's categorical slots, assigned per entity in fixed order. */
@@ -44,7 +44,9 @@
     const all = series.flatMap(s => s.values.filter(v => v != null));
     if (!all.length || all.every(v => !v)) return `<div class="empty">No data for this period</div>`;
     const W = 720, H = height, padL = 44, padB = 26, padT = 8;
-    const max = forcedMax || Math.max(...all) || 1, plotH = H - padB - padT, step = (W - padL) / labels.length;
+    // Counts: round the top up so the four gridlines land on whole numbers (no "43.5 calls").
+    const top = Math.max(...all) || 1, whole = all.every(v => Number.isInteger(v));
+    const max = forcedMax || (whole ? Math.max(4, Math.ceil(top / 4) * 4) : top), plotH = H - padB - padT, step = (W - padL) / labels.length;
     const n = series.length, gap = 2, bw = Math.max(2, Math.min(26, (step * 0.7 - gap * (n - 1)) / n));
     let g = '';
     for (let i = 0; i <= 4; i++) {
@@ -219,6 +221,69 @@
          ${card('Language split by cohort', 'Share of each cohort', pairBars(g.language_by_cohort, 'Achieved', 'Not achieved'))}</div>`;
   }
 
+  /* Sentiment: the caller's side as judged by Sarvam 105B after the call (sentiment.py). Polarity
+     colours: positive and negative from the palette, neutral in the muted grey midpoint. */
+  const SENT_COLOR = {positive: S(3), neutral: 'var(--chart-muted)', negative: S(8)};
+  let sentJob = null, sentTimer = null;
+  function sentiment() {
+    const s = data.sentiment, days = s.series.map(x => dayLabel(x.date)), n = s.analysed;
+    const share = k => n ? pct(k / n, 0) + ' of analysed' : '';
+    const daily = unit === 'pct'
+      ? vbars(days, [{label: 'Negative share', color: SENT_COLOR.negative, values: s.series.map(x => { const t = x.positive + x.neutral + x.negative; return t ? x.negative / t : null; })}], {fmt: v => pct(v, 0), max: 1})
+      : vbars(days, ['positive', 'neutral', 'negative'].map(k => ({label: k[0].toUpperCase() + k.slice(1), color: SENT_COLOR[k], values: s.series.map(x => x[k])})));
+    const sent = ['positive', 'neutral', 'negative'].map(k => ({label: k, n: s.sentiment[k], color: SENT_COLOR[k]}));
+    const trend = ['improved', 'steady', 'worsened'].map(k => ({label: k, n: s.trend[k] || 0,
+      color: k === 'worsened' ? SENT_COLOR.negative : k === 'improved' ? SENT_COLOR.positive : 'var(--chart-muted)'}));
+    const interest = ['high', 'medium', 'low', 'none'].map(k => ({label: k, n: s.interest[k] || 0}));
+    const topics = Object.entries(s.topics).map(([k, v]) => ({label: k, n: v}));
+    const split = rows => table(['', 'Calls', 'Positive', 'Neutral', 'Negative'],
+      rows.map(r => [esc(words(r.label) || '—'), nf(r.calls), nf(r.positive), nf(r.neutral),
+        `${nf(r.negative)}${r.negative ? ` <span class="dim">· ${pct(r.negative / r.calls, 0)}</span>` : ''}`]));
+    const view = id => `<button class="link" data-call="${esc(id)}">View</button>`;
+    const qs = table(['Question', 'Calls', ''], s.questions.map(q => [esc(q.question), nf(q.count), q.call_ids.slice(0, 3).map(view).join(' ')]));
+    const flagged = table(['Start time (IST)', isOut() ? 'Lead' : 'Role', 'Language', 'Sentiment', 'Mood', 'Frustration', 'Summary', ''],
+      s.flagged.map(f => [esc(fmtDate(f.started_at)), esc(f.lead_name || words(f.role) || '—'), esc(words(f.language)),
+        `<span class="sent ${f.sentiment}">${f.sentiment}</span>`, esc(f.trend), f.frustrated ? esc(f.reason || 'yes') : '', esc(f.summary), view(f.id)]));
+    const running = sentJob && sentJob.running;
+    const job = running ? `Analysing… ${nf(sentJob.done)} of ${nf(sentJob.total)} conversations`
+      : s.not_analysed ? `${nf(s.not_analysed)} call${s.not_analysed === 1 ? '' : 's'} in this range not analysed yet` : 'Every call in this range is analysed';
+    return `<div class="sent-bar"><p class="note">Sarvam 105B's reading of the caller's side of each call, made right after the call. Not yet checked against calls labelled by hand (English or Tamil): use it to pick calls to listen to, not as a score.</p>
+        <div class="sent-actions"><span class="dim" id="aSentJob">${job}${sentJob && sentJob.error ? ` · ${esc(sentJob.error)}` : ''}</span>
+        <button class="btn" id="aSentUpdate" ${running ? 'disabled' : ''} title="Analyse the calls not yet analysed and rebuild the full report (website and phone) for these dates">Update</button>
+        <a class="btn" href="/test/sentiment-report" target="_blank" rel="noopener">Full report: website and phone</a></div></div>`
+      + tiles([['Calls analysed', nf(n), `of ${nf(s.calls)} where the caller spoke`], ['Positive', nf(s.sentiment.positive), share(s.sentiment.positive)],
+               ['Negative', nf(s.sentiment.negative), share(s.sentiment.negative)], ['Showed frustration', nf(s.frustrated), share(s.frustrated)],
+               [isOut() ? 'High interest' : 'High admission interest', nf(s.interest.high || 0), share(s.interest.high || 0)],
+               ['With an unanswered question', nf(s.with_unanswered), share(s.with_unanswered)]])
+      + card(unit === 'pct' ? 'Negative share by day' : 'Sentiment by day', '', daily)
+      + `<div class="grid2">${card('Overall sentiment', 'By the end of the call', donut(sent, nf(n), 'calls analysed'))}
+         ${card('Mood from start to end', '', hbars(trend, S(1), n))}</div>`
+      + `<div class="grid2">${card(isOut() ? 'Interest in joining' : 'Admission interest', '', hbars(interest, S(1), n))}
+         ${card('Topics raised', 'A call can raise several', hbars(topics, S(1), n))}</div>`
+      + `<div class="grid2">${card(isOut() ? 'By lead' : 'By caller role', '', split(s.by_role))}${card('By language', '', split(s.by_language))}</div>`
+      + card('Questions the bot could not answer', 'As judged from the transcript; it sometimes lists questions the bot did answer, so open the call to check.', `<div class="wrap-cols">${qs}</div>`)
+      + card('Negative or frustrated calls', 'Newest first', `<div class="wrap-cols">${flagged}</div>`);
+  }
+  async function sentUpdate() {
+    const p = new URLSearchParams({date_from: $('aFrom').value, date_to: $('aTo').value});
+    try {
+      const r = await fetch(`/test/api/sentiment/update?${p}`, {method: 'POST'}); sentJob = await r.json();
+      if (!r.ok) sentJob = {error: sentJob.detail || 'failed'};
+    } catch (e) { sentJob = {error: e.message}; }
+    render(); sentPoll();
+  }
+  function sentPoll() {
+    clearTimeout(sentTimer);
+    if (!sentJob || !sentJob.running) return;
+    sentTimer = setTimeout(async () => {
+      try { sentJob = await (await fetch('/test/api/sentiment/status')).json(); } catch (e) { /* try again */ }
+      if (sentJob.running) {
+        const j = $('aSentJob'); if (j) j.textContent = `Analysing… ${nf(sentJob.done)} of ${nf(sentJob.total)} conversations`;
+        sentPoll();
+      } else load();
+    }, 2000);
+  }
+
   const DIMS = {language: 'Language', role: 'Caller role', campaign: 'Campaign', outcome: 'Outcome', ended_by: 'How it ended', day: 'Day', hour: 'Hour of day'};
   function group() {
     const key = r => groupBy === 'day' ? (r.started_at ? new Date(r.started_at).toLocaleDateString('en-CA', {timeZone: 'Asia/Kolkata'}) : '—')
@@ -256,16 +321,17 @@
   /* ---------------------------------------------------------------- loading and filters */
   function render() {
     if (!data) return;
-    const html = {overview, connectivity, engagement, tools, goals, group, logs}[tab]();
+    const html = {overview, connectivity, engagement, tools, goals, sentiment, group, logs}[tab]();
     $('aBody').innerHTML = html;
     document.querySelectorAll('#aEngTabs button').forEach(b => b.onclick = () => { engTab = b.dataset.e; render(); });
     const gb = $('aGroupBy'); if (gb) gb.onchange = () => { groupBy = gb.value; render(); };
     document.querySelectorAll('#aLogsMode button').forEach(b => b.onclick = () => { logsAll = b.dataset.m === 'a'; render(); });
     document.querySelectorAll('#aBody [data-call]').forEach(b => b.onclick = () => openDetails(b.dataset.call));
     const csv = $('aCsv'); if (csv) csv.onclick = downloadCsv;
+    const su = $('aSentUpdate'); if (su) su.onclick = sentUpdate;
   }
   function downloadCsv() {
-    const cols = ['kind', 'id', 'started_at', 'duration_s', 'caller', 'lead_name', 'campaign', 'language', 'role', 'outcome', 'goal', 'ended_by', 'turns', 'latency_ms', 'failure_reason'];
+    const cols = ['kind', 'id', 'started_at', 'duration_s', 'caller', 'lead_name', 'campaign', 'language', 'role', 'outcome', 'goal', 'ended_by', 'turns', 'latency_ms', 'sentiment', 'failure_reason'];
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const rows = data.calls.filter(r => logsAll || r.connected).map(r => cols.map(c => q(r[c])).join(','));
     const a = el('a'); a.href = URL.createObjectURL(new Blob([[cols.join(','), ...rows].join('\n')], {type: 'text/csv'}));
@@ -312,5 +378,9 @@
     tab = b.dataset.t; document.querySelectorAll('#aTabs button').forEach(x => x.classList.toggle('on', x === b)); render();
   });
 
-  window.Analytics = {show: load};
+  window.Analytics = {show: async () => {
+    // A report started earlier (or from another window) may still be running: pick its progress up.
+    try { sentJob = await (await fetch('/test/api/sentiment/status')).json(); } catch (e) { sentJob = null; }
+    await load(); sentPoll();
+  }};
 })();

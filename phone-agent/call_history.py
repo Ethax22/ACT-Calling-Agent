@@ -15,6 +15,8 @@ from pathlib import Path
 import config  # noqa: F401  (voice-pipeline on sys.path)
 from conversation_logger import LOGS_DIR, _session_dir
 
+import sentiment
+
 CALL_ID = re.compile(r"phone-[A-Za-z0-9_-]{4,100}")
 
 
@@ -141,6 +143,7 @@ def call_detail(call_id: str) -> dict | None:
         **_summary(folder),
         "meta": meta,
         "record": _json(folder / "call_record.json"),
+        "sentiment": sentiment.judged(folder),
         "audio": _audio(folder / "audio.wav") if (folder / "audio.wav").exists() else None,
         "transcript": transcript.get("messages") or [],
     }

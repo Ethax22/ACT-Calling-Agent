@@ -148,6 +148,47 @@ async def analytics_report(agent: str = "inbound", date_from: str = "", date_to:
         return _bad(e)
 
 
+@app.get("/test/api/sentiment/status")
+async def sentiment_status():
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import sentiment
+
+    return sentiment.status()
+
+
+@app.post("/test/api/sentiment/update")
+async def sentiment_update(date_from: str = "", date_to: str = ""):
+    """Build the full sentiment report (website and phone) for a range, in the background."""
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    from datetime import date, timedelta
+
+    import sentiment
+
+    try:
+        end = date.fromisoformat(date_to) if date_to else date.today()
+        start = date.fromisoformat(date_from) if date_from else end - timedelta(days=6)
+    except ValueError as e:
+        return _bad(e)
+    if start > end or (end - start).days > 92:
+        return _bad(ValueError("Pick a range of at most 3 months."))
+    return sentiment.start_update(start, end)  # starts a background task, returns the progress
+
+
+@app.get("/test/sentiment-report")
+async def sentiment_report_page():
+    """The newest full report (website chat and voice, phone in and out) as a page."""
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import sentiment
+
+    path = sentiment.latest_report()
+    if not path:
+        return PlainTextResponse("No sentiment report yet. Use Update on the Analytics page's Sentiment tab.", status_code=404)
+    return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/test/api/attempts")
 async def attempts(hours: float = 24):
     """Every campaign attempt in the last `hours` (the campaigns list's calls chart)."""
@@ -380,5 +421,9 @@ async def test_ws(websocket: WebSocket):
                 direction=call.direction, lead=call.lead)
             if campaign:
                 dialler.record_outcome(attempt_id, record)
+            # Then the sentiment judgement for the Analytics page (same script as the website report).
+            import sentiment
+            from call_history import call_dir
+            await sentiment.analyse_call(call_dir(session_id))
 
         asyncio.create_task(after_call())

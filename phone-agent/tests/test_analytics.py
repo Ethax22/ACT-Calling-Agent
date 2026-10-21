@@ -92,3 +92,19 @@ def test_outbound_counts_unanswered_attempts_and_the_visit_goal(world):
     assert {x["kind"] for x in r["calls"]} == {"call", "attempt"} and len(r["calls"]) == 4
     only = A.report("outbound", campaign=camp["id"])
     assert only["overview"]["attempted"] == 3 and only["overview"]["connected"] == 1
+
+
+def test_sentiment_counts_only_phone_prompt_judgements(world):
+    t = datetime(2026, 10, 21, 10, 0, tzinfo=C.IST)
+    judged = {"sentiment": "negative", "trend": "worsened", "admission_interest": "none", "frustrated": True,
+              "frustration_reason": "check failed", "unanswered": ["What is my attendance?"], "topics": ["records"],
+              "summary": "x"}
+    for cid, prompt in (("phone-test-s1", "phone1"), ("phone-test-s2", "website3"), ("phone-test-s3", None)):
+        _call(world, cid, start=t, secs=30, turns=2)
+        if prompt:
+            (world / "2026-10-21" / cid / "sentiment.json").write_text(
+                json.dumps({"key": "k", "prompt": prompt, "result": judged}), encoding="utf-8")
+    s = A.report("inbound", "2026-10-21", "2026-10-21")["sentiment"]
+    assert (s["calls"], s["analysed"], s["not_analysed"]) == (3, 1, 2)   # the website-prompt one is not counted
+    assert s["sentiment"]["negative"] == 1 and s["frustrated"] == 1
+    assert s["questions"][0]["call_ids"] == ["phone-test-s1"] and s["flagged"][0]["id"] == "phone-test-s1"

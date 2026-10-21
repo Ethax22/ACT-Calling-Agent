@@ -19,6 +19,9 @@ Definitions (kept here so the page and this file agree):
 - short call: connected and under 10 seconds.
 - agent ends: the call was ended from our side (end_call, idle, time limit, voicemail,
   transfer); user ends: the caller hung up.
+- sentiment: Sarvam 105B's reading of the caller's side (sentiment.json beside each call,
+  written right after the call or by the report; rag-backend/sentiment_report.py). Not
+  checked against hand-labelled calls.
 """
 import json
 import os
@@ -28,6 +31,7 @@ from datetime import date, datetime, timedelta
 
 import call_history as H
 import campaigns as C
+import sentiment
 
 SHORT_CALL_SECS = 10
 AGENT_ENDS = {"end_call", "idle", "time_limit", "voicemail", "transfer"}
@@ -119,6 +123,7 @@ def load_calls(direction: str) -> list[dict]:
             "latency_ms": [round(x * 1000) for x in (meta.get("response_times_s") or [])],
             "tools": meta.get("tool_runs") if meta.get("tool_runs") is not None else _tools_from_transcript(messages),
             "do_not_call": record.get("do_not_call", ""), "summary": record.get("call_summary", ""),
+            "sentiment": sentiment.judged(folder),
         })
     return out
 
@@ -325,11 +330,14 @@ def report(direction: str = "inbound", date_from: str | None = None, date_to: st
         "language_by_cohort": _cohort_split(yes, no, lambda c: c["language"], sorted({c["language"] for c in eligible})),
     }
 
+    sentiment_tab = _sentiment(calls, days)
+
     # ---- call logs (connected calls; outbound also lists unanswered attempts)
     logs = [{"kind": "call", "id": c["id"], "started_at": c["started_at"], "duration_s": c["duration_s"],
              "caller": c["caller"], "lead_name": c["lead_name"], "campaign": c["campaign_name"], "language": c["language"],
              "role": c["role"], "outcome": c["outcome"], "goal": c["goal"], "ended_by": c["ended_by"], "turns": c["user_turns"],
-             "latency_ms": _median(c["latency_ms"]), "tool_calls": len(c["tools"]), "connected": True} for c in calls]
+             "latency_ms": _median(c["latency_ms"]), "tool_calls": len(c["tools"]), "connected": True,
+             "sentiment": (c["sentiment"] or {}).get("sentiment", "")} for c in calls]
     if direction == "outbound":
         with C.db() as con:
             phones = {r["id"]: (r["phone"], r["lead_name"]) for r in con.execute("SELECT id, phone, lead_name FROM recipients")}
@@ -341,7 +349,7 @@ def report(direction: str = "inbound", date_from: str | None = None, date_to: st
 
     return {"agent": direction, "from": d_from.isoformat(), "to": d_to.isoformat(), "filters": choices,
             "overview": overview, "connectivity": connectivity, "engagement": engagement, "tools": tools,
-            "goals": goals, "calls": logs}
+            "goals": goals, "sentiment": sentiment_tab, "calls": logs}
 
 
 def _hist(values, edges, labels):
@@ -354,3 +362,49 @@ def _cohort_split(yes, no, key, labels):
     cy, cn = Counter(key(c) for c in yes), Counter(key(c) for c in no)
     return [{"label": label, "achieved_pct": round(100 * cy.get(label, 0) / len(yes), 1) if yes else 0,
              "not_pct": round(100 * cn.get(label, 0) / len(no), 1) if no else 0} for label in labels]
+
+
+SENTIMENTS = ("positive", "neutral", "negative")
+
+
+def _sentiment(calls: list[dict], days: list[date]) -> dict:
+    """The Sentiment tab: calls the caller spoke in, as judged (sentiment.json)."""
+    spoke = [c for c in calls if c["user_turns"] >= 1]
+    done = [c for c in spoke if c["sentiment"]]
+    s = [c["sentiment"] for c in done]
+    by_day = defaultdict(Counter)
+    for c in done:
+        by_day[_ist_date(c["started"]).isoformat()][c["sentiment"]["sentiment"]] += 1
+
+    def split(key):
+        groups = defaultdict(Counter)
+        for c in done:
+            groups[key(c)][c["sentiment"]["sentiment"]] += 1
+        return [{"label": k, "calls": sum(v.values()), **{x: v.get(x, 0) for x in SENTIMENTS}}
+                for k, v in sorted(groups.items(), key=lambda kv: -sum(kv[1].values()))]
+
+    questions = defaultdict(list)
+    for c in done:
+        for q in c["sentiment"].get("unanswered") or []:
+            questions[q.strip().rstrip("?").lower()].append((q, c["id"]))
+    flagged = [c for c in done if c["sentiment"]["frustrated"] or c["sentiment"]["sentiment"] == "negative"]
+    flagged.sort(key=lambda c: c["started_at"] or "", reverse=True)
+    return {
+        "calls": len(spoke), "analysed": len(done), "not_analysed": len(spoke) - len(done),
+        "sentiment": {x: sum(1 for r in s if r["sentiment"] == x) for x in SENTIMENTS},
+        "trend": dict(Counter(r["trend"] for r in s)),
+        "interest": dict(Counter(r["admission_interest"] for r in s)),
+        "frustrated": sum(1 for r in s if r["frustrated"]),
+        "with_unanswered": sum(1 for r in s if r.get("unanswered")),
+        "topics": dict(Counter(t for r in s for t in r.get("topics") or []).most_common()),
+        "series": [{"date": d.isoformat(), **{x: by_day[d.isoformat()].get(x, 0) for x in SENTIMENTS}} for d in days],
+        "by_role": split(lambda c: c["role"]),
+        "by_language": split(lambda c: c["language"]),
+        "questions": sorted(({"question": v[0][0], "count": len(v), "call_ids": [cid for _, cid in v][:5]}
+                             for v in questions.values()), key=lambda q: -q["count"])[:30],
+        "flagged": [{"id": c["id"], "started_at": c["started_at"], "role": c["role"], "language": c["language"],
+                     "lead_name": c["lead_name"], "sentiment": c["sentiment"]["sentiment"], "trend": c["sentiment"]["trend"],
+                     "frustrated": c["sentiment"]["frustrated"], "reason": c["sentiment"].get("frustration_reason", ""),
+                     "summary": c["sentiment"].get("summary", "")} for c in flagged[:50]],
+    }
+
