@@ -64,9 +64,47 @@ def test_records_tools_pass_the_erp_speech_through_with_the_callers_number():
     asyncio.run(handlers["get_student_report"](p))
     assert got["result"]["speech"].startswith("For Abinaya")
     assert erp.calls[0][1][0] == "9000000001" and erp.calls[0][1][1] == "312823104004"
-    p, got = _params({"topic": "low_attendance"})
+    p, got = _params({"faculty_id": "FAC1001", "topic": "low_attendance"})
+    p.context = SimpleNamespace(messages=[{"role": "user", "content": "my faculty ID is FAC 1001"}])
     asyncio.run(handlers["get_class_summary"](p))
     assert "75 percent" in got["result"]["speech"]
+    assert erp.calls[1][1][:3] == ("9000000001", "FAC1001", "low_attendance")
+
+
+def _user(*said):
+    return SimpleNamespace(messages=[{"role": "user", "content": s} for s in said])
+
+
+def test_the_class_tool_refuses_a_faculty_id_the_caller_never_said():
+    erp = FakeErp()
+    handlers = tools.make_handlers(erp, _control(), "9000000004")
+    p, got = _params({"faculty_id": "FAC1001", "topic": "low_attendance"})
+    p.context = _user("I want my class attendance")
+    asyncio.run(handlers["get_class_summary"](p))
+    assert got["result"]["status"] == "need_details" and not erp.calls
+
+
+def test_a_faculty_id_spoken_as_words_counts_as_said():
+    assert tools.faculty_id_said(_user("it is F A C one zero zero one"), "FAC1001")
+    assert tools.faculty_id_said(_user("fac-1001"), "fac 1001")
+    assert not tools.faculty_id_said(_user("it is F A C one zero zero two"), "FAC1001")
+
+
+def test_the_verified_faculty_id_is_reused_when_the_caller_picks_a_class():
+    class ListingErp(FakeErp):
+        async def class_summary(self, *a):
+            self.calls.append(("class", a))
+            return {"status": "choose_class", "speech": "You are in charge of 2 classes: ..."}
+
+    erp = ListingErp()
+    handlers = tools.make_handlers(erp, _control(), "9000000004")
+    p, got = _params({"faculty_id": "FAC1001", "topic": "low_attendance"})
+    p.context = _user("FAC1001")
+    asyncio.run(handlers["get_class_summary"](p))
+    p, got = _params({"topic": "low_attendance", "class_name": "CSE 2023"})  # model dropped the ID
+    p.context = _user("FAC1001", "the CSE one")
+    asyncio.run(handlers["get_class_summary"](p))
+    assert erp.calls[1][1] == ("9000000004", "FAC1001", "low_attendance", "CSE 2023")
 
 
 def test_the_four_tool_names_the_model_sees():

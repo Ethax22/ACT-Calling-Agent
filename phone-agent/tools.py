@@ -73,6 +73,22 @@ def date_the_caller_said(context) -> str | None:
     return None
 
 
+def _compact(text: str) -> str:
+    """'F A C one zero zero one', 'fac-1001' -> 'FAC1001': letters and digits only, numbers as digits."""
+    return re.sub(r"[^A-Z0-9]", "", normalize_spoken_numbers(text or "").upper())
+
+
+def faculty_id_said(context, faculty_id: str) -> bool:
+    """True when the faculty ID the model passes appears in the caller's own words. Same reason
+    as missing_record_detail: a made-up ID would count as a failed try against the caller."""
+    wanted = _compact(faculty_id)
+    if len(wanted) < 3:
+        return False
+    said = " ".join(m.get("content") or "" for m in context.messages
+                    if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), str))
+    return wanted in _compact(said)
+
+
 TOOLS = ToolsSchema(standard_tools=[
     FunctionSchema(
         name="get_student_report",
@@ -88,9 +104,16 @@ TOOLS = ToolsSchema(standard_tools=[
     ),
     FunctionSchema(
         name="get_class_summary",
-        description="A faculty caller's class summary: students below 75 percent attendance, or the latest test result.",
-        properties={"topic": {"type": "string", "enum": ["low_attendance", "marks_summary"]}},
-        required=["topic"],
+        description="For a faculty caller: one of the classes they are in charge of, either the students below "
+                    "75 percent attendance or the latest internal assessment result. Only call it after the caller "
+                    "has said their faculty ID.",
+        properties={
+            "faculty_id": {"type": "string", "description": "The caller's faculty ID as they said it, letters and digits."},
+            "topic": {"type": "string", "enum": ["low_attendance", "marks_summary"]},
+            "class_name": {"type": "string", "description": "Which of their classes, in the caller's words, e.g. "
+                                                            "'CSE 2023' or 'fourth year ECE'. Empty if not named yet."},
+        },
+        required=["faculty_id", "topic"],
     ),
     FunctionSchema(
         name="transfer_call",
@@ -127,9 +150,23 @@ def make_handlers(erp, control, caller_number: str) -> dict:
             caller_number, str(a.get("reg_no", "")), dob,
             str(a.get("topic", "both")), str(a.get("subject", ""))))
 
+    verified = {"faculty_id": ""}  # the faculty ID erp-lookup accepted on this call
+
     async def get_class_summary(params: FunctionCallParams):
-        logger.info(f"[tool] get_class_summary topic={params.arguments.get('topic')}")
-        await params.result_callback(await erp.class_summary(caller_number, str(params.arguments.get("topic", ""))))
+        a = params.arguments
+        faculty_id = _compact(str(a.get("faculty_id", "")))
+        if not faculty_id and verified["faculty_id"]:
+            faculty_id = verified["faculty_id"]  # the model left it out when the caller picked a class
+        elif faculty_id != verified["faculty_id"] and not faculty_id_said(params.context, faculty_id):
+            logger.warning("[tool] get_class_summary refused: the caller has not said that faculty ID")
+            await params.result_callback({"status": "need_details",
+                                          "speech": "Ask the caller for their faculty ID. Do not guess it."})
+            return
+        logger.info(f"[tool] get_class_summary topic={a.get('topic')} class={a.get('class_name')!r}")  # no faculty ID in logs
+        result = await erp.class_summary(caller_number, faculty_id, str(a.get("topic", "")), str(a.get("class_name", "")))
+        if result.get("status") in ("ok", "choose_class", "choose_topic"):
+            verified["faculty_id"] = faculty_id
+        await params.result_callback(result)
 
     async def transfer_call(params: FunctionCallParams):
         ok = await control.transfer(str(params.arguments.get("department", "reception")),

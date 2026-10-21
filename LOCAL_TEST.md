@@ -37,10 +37,11 @@ The keys come from `C:\ACT-Calling-Agent\.env` (and `voice-pipeline\.env` for an
 | 9000000001 | student (Abinaya A) | attendance (she has no marks in the test data). Register number 312823104004, date of birth 12-04-2005 |
 | 9000000002 | parent of Abinaya | same records as the student |
 | 9000000003 | student (Aaron Prince R) | marks and attendance. Register number 312825104001, date of birth 01-01-2007 |
-| 9000000004 | faculty | class summary: students below 75% attendance, latest test result |
+| 9000000004 | faculty, faculty ID **FAC1001** | in charge of two classes: CSE 2023 A (attendance only in the test data) and ECE 2025 A (marks only). The bot lists both and asks which |
+| 9000000006 | faculty, faculty ID **FAC1002** | in charge of one class, CSE 2025 A (marks only): answered without asking which class |
 | anything else, e.g. 9111111111 | unknown caller | general questions, refusal of records, transfer, leads |
 
-Three wrong dates of birth in an hour lock that number (it then says it cannot verify right now). To unlock the fake test numbers: `python -I -X utf8 -c "import sqlite3; c=sqlite3.connect(r'C:\ACT-Calling-Agent\erp-lookup\erp.db'); c.execute(\"delete from audit where caller like '90000000%' and result in ('verification_failed','locked_out')\"); c.commit()"`
+The faculty rows come from `python load_contacts.py --fake` (in `erp-lookup`); run it again if 9000000004 is treated as an unknown caller. Three wrong dates of birth (or faculty IDs) in an hour lock that number (it then says it cannot verify right now). To unlock the fake test numbers: `python -I -X utf8 -c "import sqlite3; c=sqlite3.connect(r'C:\ACT-Calling-Agent\erp-lookup\erp.db'); c.execute(\"delete from audit where caller like '90000000%' and result in ('verification_failed','locked_out')\"); c.commit()"`
 
 ## What to try, and what you should see
 
@@ -54,7 +55,9 @@ Three wrong dates of birth in an hour lock that number (it then says it cannot v
 
 **Interrupting.** Talk over a long answer; it should stop within about a second. Say only "okay" while it talks; it keeps going. (Final tuning waits for the real phone.)
 
-**Records** (9000000003): "I want to know my marks" -> register number -> date of birth -> it reads the marks. Wrong date of birth: "could not verify"; three wrong tries: "cannot verify right now". An unknown number asking for marks is refused and offered the reception. 9000000004: ask which students are below 75%.
+**Records** (9000000003): "I want to know my marks" -> register number -> date of birth -> it reads the marks. Wrong date of birth: "could not verify"; three wrong tries: "cannot verify right now". An unknown number asking for marks is refused and offered the reception. Marks are announced as "Internal Assessment Test 1".
+
+**Faculty** (9000000004): "Which students in my class are below 75 percent attendance?" -> it asks for your faculty ID -> say "FAC 1001" -> it reads it back ("F A C 1 0 0 1, is that right?") -> "yes" -> it lists your two classes -> "the CSE one" -> the names below 75%. Ask "latest internal assessment result for my ECE class" for the marks summary. 9000000006 with FAC1002 gets its one class straight away. A wrong ID: "couldn't verify"; three wrong tries lock the number like a wrong date of birth.
 
 **Leads.** As an unknown caller say you want to join computer science, give a name and a ten-digit number. It reads the number back digit by digit; say "yes". It thanks you and a row appears in the leads Sheet with source `phone`. (On the website chat the same flow saves with source `chat`.) Delete test rows afterwards.
 

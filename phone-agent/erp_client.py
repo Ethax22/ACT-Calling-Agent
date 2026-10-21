@@ -39,8 +39,9 @@ class ErpClient:
                 "topic": topic or "both", "subject": subject or ""}
         return await self._post("/student", body) or ERP_DOWN
 
-    async def class_summary(self, caller_number: str, topic: str) -> dict:
-        return await self._post("/class", {"caller_number": caller_number, "topic": topic}) or ERP_DOWN
+    async def class_summary(self, caller_number: str, faculty_id: str, topic: str, class_name: str = "") -> dict:
+        body = {"caller_number": caller_number, "faculty_id": faculty_id, "topic": topic or "", "class_name": class_name or ""}
+        return await self._post("/class", body) or ERP_DOWN
 
     async def route(self, department: str) -> dict:
         return await self._post("/route", {"department": department}) or {"status": "none", "transfer_number": "none"}

@@ -5,15 +5,14 @@ so the weekly refresh is just "drop new PDFs in raw/ and run `python ingest.py`"
 Never touches the contacts / verification tables (loaded separately by load_contacts.py).
 """
 import json
+import os
 import re
 import sqlite3
 import sys
 from pathlib import Path
 
-import pdfplumber
-
 HERE = Path(__file__).parent
-DB_PATH = HERE / "erp.db"
+DB_PATH = Path(os.environ.get("ERP_DB", HERE / "erp.db"))  # same override as api.py
 RAW = HERE / "raw"
 
 SCHEMA = """
@@ -29,6 +28,9 @@ CREATE TABLE IF NOT EXISTS attendance_summary(reg_no TEXT, period TEXT, other_at
 CREATE TABLE IF NOT EXISTS contacts(phone TEXT, role TEXT, name TEXT, reg_no TEXT, programme TEXT, batch TEXT, section TEXT,
   active INTEGER DEFAULT 1);
 CREATE TABLE IF NOT EXISTS verification(reg_no TEXT PRIMARY KEY, dob TEXT);
+CREATE TABLE IF NOT EXISTS faculty(faculty_id TEXT PRIMARY KEY, name TEXT, phone TEXT, active INTEGER DEFAULT 1);
+CREATE TABLE IF NOT EXISTS faculty_classes(faculty_id TEXT, programme TEXT, batch TEXT, section TEXT,
+  PRIMARY KEY(faculty_id, programme, batch, section));
 CREATE TABLE IF NOT EXISTS audit(ts TEXT DEFAULT CURRENT_TIMESTAMP, caller TEXT, role TEXT, reg_no TEXT, topic TEXT, result TEXT);
 """
 
@@ -41,6 +43,8 @@ CODE = re.compile(r"\b(?:\d\d[A-Z]{2}\d{3}|[A-Z]{2,3}\d{3,4})\b")
 
 
 def _text(path: Path) -> list[str]:
+    import pdfplumber  # here, not at the top: load_contacts.py imports this file and needs no PDF reader
+
     with pdfplumber.open(path) as pdf:
         return [ln for pg in pdf.pages for ln in (pg.extract_text() or "").split("\n")]
 
