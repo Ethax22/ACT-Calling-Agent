@@ -3,6 +3,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Agni AI Test Line</title>
 <link rel="stylesheet" href="/test/static/campaigns.css">
+<link rel="stylesheet" href="/test/static/analytics.css">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
 <style>
@@ -183,7 +184,7 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
 </style></head><body>
 <header class="top">
   <div class="brand"><span class="logo">A</span>Agni AI <small>Phone test line</small></div>
-  <nav class="tabs"><button data-view="call" class="on">Test call</button><button data-view="history">Call history</button><button data-view="campaigns">Campaigns</button></nav>
+  <nav class="tabs"><button data-view="call" class="on">Test call</button><button data-view="history">Call history</button><button data-view="campaigns">Campaigns</button><button data-view="analytics">Analytics</button></nav>
 </header>
 
 <main>
@@ -336,7 +337,31 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
       </table></div></div>
     </div>
   </section>
+
+  <!-- agent analytics -->
+  <section id="view-analytics" hidden>
+    <div class="crumb a-head">
+      <span class="dim">Agent Analytics</span><span class="dim">/</span>
+      <select id="aAgent" aria-label="Agent"><option value="inbound">Agni Inbound agent</option><option value="outbound">Agni Outbound agent</option></select>
+    </div>
+    <div class="filters a-filters">
+      <div class="seg" id="aRange"><button data-d="7">7 days</button><button data-d="30">30 days</button><button data-d="0" class="on">All time</button></div>
+      <label class="date-in"><span class="dim">From</span><input type="date" id="aFrom"></label>
+      <label class="date-in"><span class="dim">To</span><input type="date" id="aTo"></label>
+      <select id="aCampaign" aria-label="Campaign"><option value="">All campaigns</option></select>
+      <select id="aLanguage" aria-label="Language"><option value="">All languages</option></select>
+      <select id="aRole" aria-label="Caller role"><option value="">All roles</option></select>
+      <span class="spacer"></span>
+      <div class="seg" id="aUnit" aria-label="Numbers or percent"><button data-u="n" class="on">#</button><button data-u="pct">%</button></div>
+    </div>
+    <div class="subtabs" id="aTabs">
+      <button data-t="overview" class="on">Overview</button><button data-t="connectivity">Connectivity</button><button data-t="engagement">Engagement</button>
+      <button data-t="tools">Tools</button><button data-t="goals">Goals</button><button data-t="group">Group by</button><button data-t="logs">Call logs</button>
+    </div>
+    <div id="aBody"><div class="empty-row">Loading…</div></div>
+  </section>
 </main>
+<div class="a-tip" id="aTip" hidden></div>
 
 <!-- schedule campaign wizard -->
 <div class="m-scrim" id="wizScrim" hidden></div>
@@ -497,8 +522,10 @@ function callParams() {
 function showView(v) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   $('view-call').hidden = v !== 'call'; $('view-history').hidden = v !== 'history'; $('view-campaigns').hidden = v !== 'campaigns';
+  $('view-analytics').hidden = v !== 'analytics';
   if (v === 'history') loadCalls();
   if (v === 'campaigns' && window.Campaigns) Campaigns.show();
+  if (v === 'analytics' && window.Analytics) Analytics.show();
 }
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showView(b.dataset.view));
 $('toHistory').onclick = () => showView('history');
@@ -950,4 +977,5 @@ $('pMute').onclick = () => { if (!audioEl) return; audioEl.muted = !audioEl.mute
 window.addEventListener('resize', () => { if (waveData) { for (const t of waveData) t.pk = peaks(t.raw, Math.max(40, Math.floor(t.cv.clientWidth / 4))); drawWave(); } });
 </script>
 <script src="/test/static/campaigns.js"></script>
+<script src="/test/static/analytics.js"></script>
 </body></html>

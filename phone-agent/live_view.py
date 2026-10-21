@@ -69,6 +69,8 @@ class LiveView(BaseObserver):
         self.router = None                 # the call's ConversationRouter, to notice a language change
         self._language = "en"
         self.language_changes: list[dict] = []  # saved with the call: {"after_user_turn": n, "language": "ta"}
+        self.tool_runs: list[dict] = []    # saved with the call: {"name", "ms", "status"} (Agent Analytics' Tools tab)
+        self._tool_started: dict[str, float] = {}
 
     async def send(self, message: dict) -> None:
         if self.worker:
@@ -94,6 +96,14 @@ class LiveView(BaseObserver):
             if key in self._tool_events:
                 return
             self._tool_events.add(key)
+            if msg["type"] == "tool_call":
+                self._tool_started[msg["id"]] = time.monotonic()
+            else:
+                started = self._tool_started.pop(msg["id"], None)
+                result = msg.get("result")
+                status = result.get("status", "") if isinstance(result, dict) else ""
+                self.tool_runs.append({"name": msg["name"], "status": status or "ok",
+                                       "ms": round((time.monotonic() - started) * 1000) if started else None})
         if msg:
             await self.send(msg)
 

@@ -58,7 +58,7 @@ def _parse(ts: str | None):
 def write_meta(call_id: str, *, started_at: str, caller_number: str, role: str, ended_by: str,
                transfer_to, response_times: list[float] | None = None, user_turns: int = 0,
                direction: str = "inbound", lead=None, language_changes: list | None = None,
-               campaign: dict | None = None) -> Path:
+               campaign: dict | None = None, tool_runs: list | None = None) -> Path:
     ended = datetime.now(timezone.utc)
     start = _parse(started_at) or ended
     times = response_times or []
@@ -78,6 +78,7 @@ def write_meta(call_id: str, *, started_at: str, caller_number: str, role: str, 
         "channel": "browser test line",
         "direction": direction,
         "language_changes": language_changes or [],
+        "tool_runs": tool_runs or [],
     }
     if lead is not None:
         meta["lead"] = {"name": lead.name, "course": lead.course, "source": lead.source, "date": lead.date}

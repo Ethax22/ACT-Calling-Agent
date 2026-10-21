@@ -134,6 +134,20 @@ async def campaigns_detail(campaign_id: str, status: str = ""):
     return camp
 
 
+@app.get("/test/api/analytics")
+async def analytics_report(agent: str = "inbound", date_from: str = "", date_to: str = "", campaign: str = "",
+                           language: str = "", role: str = ""):
+    """Agent Analytics (all tabs) for the inbound or outbound agent, computed from the saved calls."""
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import analytics
+
+    try:
+        return await asyncio.to_thread(analytics.report, agent, date_from or None, date_to or None, campaign, language, role)
+    except ValueError as e:
+        return _bad(e)
+
+
 @app.get("/test/api/attempts")
 async def attempts(hours: float = 24):
     """Every campaign attempt in the last `hours` (the campaigns list's calls chart)."""
@@ -282,7 +296,8 @@ async def ringing_decline(attempt_id: str):
     return {"declined": dialler.decline(attempt_id)}
 
 
-_PAGE_FILES = {"campaigns.js": "application/javascript", "campaigns.css": "text/css"}
+_PAGE_FILES = {"campaigns.js": "application/javascript", "campaigns.css": "text/css",
+               "analytics.js": "application/javascript", "analytics.css": "text/css"}
 
 
 @app.get("/test/static/{name}")
@@ -352,7 +367,7 @@ async def test_ws(websocket: WebSocket):
                        user_turns=call.live.user_turns if call.live else 0,
                        direction=call.direction, lead=call.lead,
                        language_changes=call.live.language_changes if call.live else None,
-                       campaign=campaign)
+                       campaign=campaign, tool_runs=call.live.tool_runs if call.live else None)
         except Exception:
             logger.exception("[call-meta] failed")
 
