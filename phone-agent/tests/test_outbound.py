@@ -71,3 +71,17 @@ def test_outbound_call_record_uses_the_outbound_fields_and_what_the_call_knows(m
     assert rec["call_outcome"] == "voicemail" and rec["interest_level"] == "high" and rec["do_not_call"] == "no"
     assert rec["language_used"] == "tanglish" and rec["lead_name"] == "Ravi" and rec["direction"] == "outbound"
     assert "call_disposition" not in rec and not sheet   # outbound stays out of the inbound Calls tab
+
+
+def test_a_silent_outbound_call_is_never_do_not_call(monkeypatch, tmp_path):
+    t = tmp_path / "transcript.json"
+    t.write_text(json.dumps({"messages": [{"role": "assistant", "content": "Hello Ravi..."}]}), encoding="utf-8")
+    monkeypatch.setattr(post_call, "_transcript_path", lambda s: t)
+
+    async def extract(messages, prompt=None):
+        return {"call_outcome": "not_interested", "do_not_call": "yes"}   # what the model said on a real silent call
+
+    monkeypatch.setattr(post_call, "_extract", extract)
+    rec = asyncio.run(post_call.record_call("phone-test-s", "lead", "9876543210", "", None, direction="outbound",
+                                            lead=prompts.Lead(name="Ravi")))
+    assert rec["do_not_call"] == "no" and rec["call_outcome"] == "no_answer"

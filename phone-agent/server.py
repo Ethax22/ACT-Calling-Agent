@@ -5,8 +5,8 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import Body, FastAPI, WebSocket
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 import config  # noqa: F401  (loads .env files and the shared voice-pipeline path)
 from prompts import GREETING
@@ -39,6 +39,10 @@ async def _startup():
 
     prune_old_logs()  # 90-day retention, shared with the website's call logs
     asyncio.create_task(greeting_cache.ensure_rendered("en", GREETING))
+    if TEST_PAGE_ENABLED:  # campaign calls ring on the test page until the Vobiz line exists
+        from dialler import dialler
+
+        dialler.start()
     # Load the turn-taking models now: the first call after a restart waited about 4 s for
     # them (2026-10-20, seen in a recording: the greeting began 5 s after the call opened).
     await asyncio.to_thread(_warm_up)
@@ -85,6 +89,184 @@ async def call_audio(call_id: str):
     return FileResponse(path, media_type="audio/wav", filename=f"{call_id}.wav")
 
 
+# ---------------------------------------------------------------- outbound campaigns (test page)
+def _off():
+    return JSONResponse({"detail": "disabled"}, status_code=404)
+
+
+def _bad(e: Exception):
+    return JSONResponse({"detail": str(e)}, status_code=400)
+
+
+@app.get("/test/api/campaigns")
+async def campaigns_list():
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    return {"campaigns": await asyncio.to_thread(C.list_campaigns)}
+
+
+@app.post("/test/api/campaigns")
+async def campaigns_create(spec: dict = Body(...)):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    try:
+        return await asyncio.to_thread(C.create_campaign, spec)
+    except (ValueError, TypeError) as e:
+        return _bad(e)
+
+
+@app.get("/test/api/campaigns/{campaign_id}")
+async def campaigns_detail(campaign_id: str, status: str = ""):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    camp = await asyncio.to_thread(C.get_campaign, campaign_id)
+    if not camp:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    camp["calls"] = await asyncio.to_thread(C.campaign_calls, campaign_id, status)
+    camp["timeline"] = await asyncio.to_thread(C.campaign_timeline, campaign_id)
+    camp["stop_count"] = await asyncio.to_thread(C.stop_count, campaign_id)
+    return camp
+
+
+@app.post("/test/api/campaigns/{campaign_id}/cancel")
+async def campaigns_cancel(campaign_id: str):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+    from dialler import dialler
+
+    try:
+        camp = await asyncio.to_thread(C.cancel_campaign, campaign_id)
+    except ValueError as e:
+        return _bad(e)
+    cur = dialler.current
+    if cur and cur["campaign_id"] == campaign_id and cur["state"] == "ringing":
+        dialler.finish(cur["attempt_id"], "cancelled", "campaign cancelled")
+    return camp
+
+
+@app.post("/test/api/campaigns/{campaign_id}/cohorts")
+async def campaigns_add_cohort(campaign_id: str, cohort: dict = Body(...)):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    try:
+        return await asyncio.to_thread(C.add_cohort, campaign_id, cohort)
+    except ValueError as e:
+        return _bad(e)
+
+
+@app.post("/test/api/campaigns/{campaign_id}/stops")
+async def campaigns_stops(campaign_id: str, body: dict = Body(...)):
+    """A stop file: numbers this campaign must not call (a list, or CSV/plain text, one per line)."""
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import re
+
+    import campaigns as C
+
+    phones = body.get("phones") or re.split(r"[\s,;]+", body.get("text") or "")
+    return {"added": await asyncio.to_thread(C.stop_add, campaign_id, phones),
+            "total": await asyncio.to_thread(C.stop_count, campaign_id)}
+
+
+@app.post("/test/api/recipients/parse")
+async def recipients_parse(body: dict = Body(...)):
+    """An uploaded CSV (the page reads the file and sends its text): columns, rows, suggested mapping."""
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    parsed = C.parse_csv(body.get("text") or "")
+    if not parsed["columns"]:
+        return _bad(ValueError("The file has no header row."))
+    return parsed
+
+
+@app.post("/test/api/recipients/validate")
+async def recipients_validate(body: dict = Body(...)):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    valid, invalid = C.build_recipients(body.get("rows") or [], body.get("mapping") or {})
+    return {"valid": len(valid), "invalid": invalid, "preview": [{**r, "phone": C.mask(r["phone"])} for r in valid[:5]]}
+
+
+@app.get("/test/api/recipients/sheet")
+async def recipients_sheet():
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    try:
+        return await asyncio.to_thread(C.leads_sheet_rows)
+    except Exception as e:
+        return _bad(e)
+
+
+@app.get("/test/api/recipients/sample.csv")
+async def recipients_sample():
+    import campaigns as C
+
+    return PlainTextResponse(C.sample_csv(), media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=outbound_sample.csv"})
+
+
+@app.get("/test/api/dnd")
+async def dnd_list():
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    return {"dnd": await asyncio.to_thread(C.dnd_list)}
+
+
+@app.post("/test/api/dnd")
+async def dnd_add(body: dict = Body(...)):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    ok = await asyncio.to_thread(C.dnd_add, body.get("phone") or "", body.get("reason") or "", "manual")
+    return {"ok": True} if ok else _bad(ValueError("Not a valid 10-digit mobile number."))
+
+
+@app.delete("/test/api/dnd/{phone}")
+async def dnd_remove(phone: str):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    import campaigns as C
+
+    return {"removed": await asyncio.to_thread(C.dnd_remove, phone)}
+
+
+@app.get("/test/api/ringing")
+async def ringing():
+    """Polled by the test page: an incoming campaign call to answer, if any (also tells the dialler a page is open)."""
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    from dialler import dialler
+
+    return {"ringing": dialler.ringing(), **dialler.status()}
+
+
+@app.post("/test/api/ringing/{attempt_id}/decline")
+async def ringing_decline(attempt_id: str):
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    from dialler import dialler
+
+    return {"declined": dialler.decline(attempt_id)}
+
+
 @app.websocket("/test/ws")
 async def test_ws(websocket: WebSocket):
     if not TEST_PAGE_ENABLED:
@@ -98,34 +280,64 @@ async def test_ws(websocket: WebSocket):
     from phone_audio import BrowserPhoneSerializer
     from post_call import record_call
 
-    q = websocket.query_params
-    lead = None
-    if q.get("direction") == "outbound":  # the page plays a lead the college is calling back
-        from prompts import Lead
+    from loguru import logger
 
+    from prompts import Lead
+
+    q = websocket.query_params
+    lead, campaign = None, None
+    attempt_id = q.get("attempt") or ""
+    if attempt_id:  # the page answered a ringing campaign call
+        from dialler import dialler
+
+        info = dialler.answer(attempt_id)
+        if not info:
+            await websocket.close(code=4404)  # that call is no longer ringing
+            return
+        lead = Lead(name=info["lead_name"], course=info["lead_course"], source=info["enquiry_source"],
+                    date=info["enquiry_date"], phone=info["phone"])
+        campaign = {"id": info["campaign_id"], "name": info["campaign_name"], "attempt_id": attempt_id}
+    elif q.get("direction") == "outbound":  # the page plays a lead the college is calling back
         clip = lambda k, n=60: (q.get(k) or "").strip()[:n]
         lead = Lead(name=clip("lead_name", 40), course=clip("lead_course"), source=clip("enquiry_source"),
                     date=clip("enquiry_date", 20), phone=clip("caller", 15))
     session_id = f"phone-test-{uuid.uuid4().hex}"
-    call = await start_phone_call(
-        websocket, session_id, BrowserPhoneSerializer(), q.get("caller", ""), live_view=True, lead=lead
-    )
+    started = asyncio.get_running_loop().time()
+    try:
+        call = await start_phone_call(
+            websocket, session_id, BrowserPhoneSerializer(), lead.phone if campaign else q.get("caller", ""),
+            live_view=True, lead=lead
+        )
+    except Exception as e:
+        logger.exception("[call] could not start")
+        if campaign:
+            dialler.call_finished(attempt_id, session_id, 0, error=f"could not start the call: {e}")
+        await websocket.close(code=1011)
+        return
     try:
         await PipelineRunner().run(call.worker)
     finally:
+        if campaign:
+            dialler.call_finished(attempt_id, session_id, asyncio.get_running_loop().time() - started)
         try:
             write_meta(session_id, started_at=call.started_at, caller_number=call.caller_number, role=call.role,
                        ended_by=call.control.ended_by, transfer_to=call.control.transfer_to,
                        response_times=call.live.response_times if call.live else None,
                        user_turns=call.live.user_turns if call.live else 0,
                        direction=call.direction, lead=call.lead,
-                       language_changes=call.live.language_changes if call.live else None)
+                       language_changes=call.live.language_changes if call.live else None,
+                       campaign=campaign)
         except Exception:
-            from loguru import logger
-
             logger.exception("[call-meta] failed")
+
         # After the call: structured record + Sheet row. Runs on its own so a slow
-        # extraction never holds the connection open.
-        asyncio.create_task(record_call(
-            session_id, call.role, call.caller_number, call.control.ended_by, call.control.transfer_to,
-            direction=call.direction, lead=call.lead))
+        # extraction never holds the connection open. A campaign call's outcome then goes
+        # back to the campaign (and "do not call" to the DND list).
+        async def after_call():
+            record = await record_call(
+                session_id, call.role, call.caller_number, call.control.ended_by, call.control.transfer_to,
+                direction=call.direction, lead=call.lead)
+            if campaign:
+                dialler.record_outcome(attempt_id, record)
+
+        asyncio.create_task(after_call())

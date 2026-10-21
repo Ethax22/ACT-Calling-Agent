@@ -138,6 +138,11 @@ async def record_call(session_id: str, role: str, caller_number: str, ended_by: 
         record = _clean(raw, OUTBOUND_FIELDS if outbound else FIELDS)
         if outbound:
             # What the call itself knows beats the model's reading of the transcript.
+            said = [m for m in messages if m.get("role") == "user" and (m.get("content") or "").strip()]
+            if not said:
+                # Answered and gone without a word: the model once marked such a call
+                # "do not call" (2026-10-21), which would have put the number on the DND list.
+                record.update({"call_outcome": "no_answer", "do_not_call": "no", "interest_level": "unclear"})
             if ended_by == "voicemail":
                 record["call_outcome"] = "voicemail"
             elif transfer_to:

@@ -158,6 +158,20 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
 .p-foot .speed{font-size:12px;padding:3px 8px;border-radius:6px;background:var(--soft);min-width:38px}
 .p-wait{font-size:13px;color:var(--muted);padding:8px 2px}
 
+/* incoming campaign call */
+.ring{position:fixed;right:20px;bottom:20px;width:min(340px,calc(100vw - 32px));background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.18);padding:16px;z-index:30;animation:ringin .25s ease-out}
+@keyframes ringin{from{transform:translateY(12px);opacity:0}}
+.ring-top{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);font-weight:500}
+.ring-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.3}}
+.ring-left{margin-left:auto;font-variant-numeric:tabular-nums}
+.ring-who{font-size:18px;font-weight:600;margin-top:8px}
+.ring-meta{font-size:13px;color:var(--muted);margin-top:2px}
+.ring-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.btn.answer{background:var(--ok);color:#fff;border-color:transparent}.btn.answer:hover{background:#17663b}
+.btn.decline{background:var(--bad-soft);color:var(--bad);border-color:transparent}.btn.decline:hover{background:#fbd5d1}
+.ring-note{font-size:11px;color:var(--faint);margin-top:10px}
+
 @media (max-width:640px){
   main{padding:12px}.top{padding:12px 16px;flex-wrap:wrap}
   .agent{height:calc(100vh - 150px)}
@@ -231,6 +245,15 @@ td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
   </section>
 </main>
 
+<!-- incoming campaign call -->
+<div class="ring" id="ring" hidden role="alertdialog" aria-labelledby="ringTitle">
+  <div class="ring-top"><span class="ring-dot"></span><span id="ringTitle">Incoming campaign call</span><span class="ring-left" id="ringLeft"></span></div>
+  <div class="ring-who" id="ringWho"></div>
+  <div class="ring-meta" id="ringMeta"></div>
+  <div class="ring-actions"><button class="btn decline" id="ringDecline">Decline</button><button class="btn answer" id="ringAnswer">Answer</button></div>
+  <div class="ring-note">You play the lead. Declining counts as busy; not answering counts as no answer.</div>
+</div>
+
 <!-- call details -->
 <div class="scrim" id="scrim" hidden></div>
 <aside class="drawer" id="drawer" hidden aria-label="Call details">
@@ -278,7 +301,9 @@ document.querySelectorAll('#mode button').forEach(b => b.onclick = () => {
   if (direction === 'outbound' && $('caller').value.startsWith('90000000')) $('caller').value = '9876543210';
   if (direction === 'inbound' && $('caller').value === '9876543210') $('caller').value = '9000000001';
 });
+let answering = null;  // the ringing campaign call being answered
 function callParams() {
+  if (answering) return new URLSearchParams({attempt: answering.attempt_id}).toString();
   const p = new URLSearchParams({caller: $('caller').value.trim()});
   if (direction === 'outbound') {
     p.set('direction', 'outbound'); p.set('lead_name', $('leadName').value.trim()); p.set('lead_course', $('leadCourse').value.trim());
@@ -438,7 +463,8 @@ async function startCall() {
   capNode.port.onmessage = e => { if (ws.readyState === 1) ws.send(e.data); };
   ws.onopen = () => {
     $('state').textContent = 'On the call'; $('callBtn').disabled = false; setCallButton(true); $('mute').disabled = false;
-    addChip(live.box, direction === 'outbound' ? `Calling ${$('leadName').value.trim() || 'the lead'}` : 'Conversation started'); $('empty').hidden = true;
+    addChip(live.box, answering ? `Campaign call · ${answering.campaign_name} · ${answering.lead_name || 'lead'}`
+      : direction === 'outbound' ? `Calling ${$('leadName').value.trim() || 'the lead'}` : 'Conversation started'); $('empty').hidden = true;
     startedAt = Date.now();
     timerId = setInterval(() => { $('timer').textContent = clock((Date.now() - startedAt) / 1000).padStart(5, '0'); }, 250);
     meterId = setInterval(drawMeter, 90);
@@ -455,7 +481,7 @@ function endCall(byUser) {
   stopPlayback(); clearInterval(timerId); clearInterval(meterId); resetMeter();
   if (micStream) micStream.getTracks().forEach(t => t.stop());
   if (micCtx) micCtx.close(); if (playCtx) playCtx.close();
-  micCtx = playCtx = micStream = ws = null; startedAt = 0;
+  micCtx = playCtx = micStream = ws = null; startedAt = 0; answering = null;
   $('mute').disabled = true; $('mute').classList.remove('muted'); setCallButton(false);
   $('callBtn').disabled = false; $('caller').disabled = false; $('state').textContent = 'Idle';
   document.querySelectorAll('#leadForm input').forEach(i => i.disabled = false);
@@ -488,6 +514,45 @@ $('mute').onclick = () => {
   $('mute').classList.toggle('muted', muted); $('mute').title = muted ? 'Unmute microphone' : 'Mute microphone';
 };
 $('newCall').onclick = $('startNew').onclick = () => { if (micCtx || ws) return; sessionId = null; resetStream(); };
+
+/* ---------- incoming campaign calls (the dialler rings this page) ---------- */
+let ringing = null, ringTone = null;
+function startTone() {
+  if (ringTone) return;
+  try {
+    const ctx = new AudioContext(), gain = ctx.createGain(); gain.gain.value = 0; gain.connect(ctx.destination);
+    const a = ctx.createOscillator(), b = ctx.createOscillator(); a.frequency.value = 440; b.frequency.value = 480;
+    a.connect(gain); b.connect(gain); a.start(); b.start();
+    const t0 = ctx.currentTime;  // ring 2 s, quiet 4 s, like a phone
+    for (let k = 0; k < 20; k++) { gain.gain.setValueAtTime(0.06, t0 + k * 6); gain.gain.setValueAtTime(0, t0 + k * 6 + 2); }
+    ringTone = ctx;
+  } catch (e) {}
+}
+function stopTone() { if (ringTone) { ringTone.close(); ringTone = null; } }
+function showRing(r) {
+  ringing = r;
+  if (!r) { $('ring').hidden = true; stopTone(); return; }
+  $('ringWho').textContent = r.lead_name || 'Unnamed lead';
+  $('ringMeta').textContent = [r.lead_course, r.phone_masked.replace(/^X+/, '••••••'), `${r.campaign_name}`, `attempt ${r.attempt}`].filter(Boolean).join(' · ');
+  $('ringLeft').textContent = `${r.seconds_left}s`;
+  if ($('ring').hidden) { $('ring').hidden = false; startTone(); }
+}
+async function pollRinging() {
+  try {
+    const r = await fetch('/test/api/ringing'); const d = await r.json();
+    showRing(micCtx || ws ? null : d.ringing);  // never offer a second call during one
+  } catch (e) {}
+}
+setInterval(pollRinging, 2000); pollRinging();
+$('ringDecline').onclick = async () => {
+  if (!ringing) return; const id = ringing.attempt_id; showRing(null);
+  await fetch(`/test/api/ringing/${id}/decline`, {method: 'POST'});
+};
+$('ringAnswer').onclick = () => {
+  if (!ringing || micCtx || ws) return;
+  answering = ringing; showRing(null); showView('call');
+  startCall().catch(e => { $('state').textContent = 'Could not start: ' + (e.message || e); endCall(false); $('callBtn').disabled = false; });
+};
 
 /* ---------- call history ---------- */
 let page = 1, total = 0;

@@ -57,7 +57,8 @@ def _parse(ts: str | None):
 
 def write_meta(call_id: str, *, started_at: str, caller_number: str, role: str, ended_by: str,
                transfer_to, response_times: list[float] | None = None, user_turns: int = 0,
-               direction: str = "inbound", lead=None, language_changes: list | None = None) -> Path:
+               direction: str = "inbound", lead=None, language_changes: list | None = None,
+               campaign: dict | None = None) -> Path:
     ended = datetime.now(timezone.utc)
     start = _parse(started_at) or ended
     times = response_times or []
@@ -80,6 +81,8 @@ def write_meta(call_id: str, *, started_at: str, caller_number: str, role: str, 
     }
     if lead is not None:
         meta["lead"] = {"name": lead.name, "course": lead.course, "source": lead.source, "date": lead.date}
+    if campaign:
+        meta["campaign"] = campaign  # id, name, attempt_id
     folder = call_dir(call_id) or _session_dir(call_id)
     path = folder / "call_meta.json"
     path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -113,6 +116,8 @@ def _summary(folder: Path) -> dict:
         "direction": meta.get("direction") or record.get("direction") or "inbound",
         "lead_name": (meta.get("lead") or {}).get("name", ""),
         "outcome": record.get("call_outcome") or record.get("call_disposition") or "",
+        "campaign_id": (meta.get("campaign") or {}).get("id", ""),
+        "campaign_name": (meta.get("campaign") or {}).get("name", ""),
     }
 
 
