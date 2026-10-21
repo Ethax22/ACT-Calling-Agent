@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 import config  # noqa: F401  (loads .env files and the shared voice-pipeline path)
 from prompts import GREETING
@@ -56,6 +56,35 @@ async def test_page():
     return FileResponse(STATIC / "test.html")
 
 
+# Call history for the test page. Under /test so the server's nginx password covers it
+# (deploy/nginx/act-agent.conf): transcripts and recordings can hold student records.
+@app.get("/test/api/calls")
+async def calls(page: int = 1, per_page: int = 20):
+    if not TEST_PAGE_ENABLED:
+        return JSONResponse({"detail": "disabled"}, status_code=404)
+    from call_history import list_calls
+
+    return await asyncio.to_thread(list_calls, page, per_page)
+
+
+@app.get("/test/api/calls/{call_id}")
+async def call_details(call_id: str):
+    from call_history import call_detail
+
+    detail = await asyncio.to_thread(call_detail, call_id) if TEST_PAGE_ENABLED else None
+    return detail if detail else JSONResponse({"detail": "not found"}, status_code=404)
+
+
+@app.get("/test/api/calls/{call_id}/audio")
+async def call_audio(call_id: str):
+    from call_history import audio_path
+
+    path = audio_path(call_id) if TEST_PAGE_ENABLED else None
+    if not path:
+        return Response(status_code=404)
+    return FileResponse(path, media_type="audio/wav", filename=f"{call_id}.wav")
+
+
 @app.websocket("/test/ws")
 async def test_ws(websocket: WebSocket):
     if not TEST_PAGE_ENABLED:
@@ -64,17 +93,27 @@ async def test_ws(websocket: WebSocket):
     await websocket.accept()
     from pipecat.pipeline.runner import PipelineRunner
 
+    from call_history import write_meta
     from call_pipeline import start_phone_call
     from phone_audio import BrowserPhoneSerializer
     from post_call import record_call
 
     session_id = f"phone-test-{uuid.uuid4().hex}"
     call = await start_phone_call(
-        websocket, session_id, BrowserPhoneSerializer(), websocket.query_params.get("caller", "")
+        websocket, session_id, BrowserPhoneSerializer(), websocket.query_params.get("caller", ""), live_view=True
     )
     try:
         await PipelineRunner().run(call.worker)
     finally:
+        try:
+            write_meta(session_id, started_at=call.started_at, caller_number=call.caller_number, role=call.role,
+                       ended_by=call.control.ended_by, transfer_to=call.control.transfer_to,
+                       response_times=call.live.response_times if call.live else None,
+                       user_turns=call.live.user_turns if call.live else 0)
+        except Exception:
+            from loguru import logger
+
+            logger.exception("[call-meta] failed")
         # After the call: structured record + Sheet row. Runs on its own so a slow
         # extraction never holds the connection open.
         asyncio.create_task(record_call(

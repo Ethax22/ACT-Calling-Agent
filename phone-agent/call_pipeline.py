@@ -28,9 +28,15 @@ class PhoneCall:
     caller_number: str
     role: str
     first_name: str
+    live: object = None  # LiveView on the browser test line, else None
+    started_at: str = ""  # UTC, ISO
 
 
-async def start_phone_call(websocket, session_id: str, serializer, caller_number: str = "") -> PhoneCall:
+async def start_phone_call(websocket, session_id: str, serializer, caller_number: str = "",
+                           live_view: bool = False) -> PhoneCall:
+    from datetime import datetime, timezone
+
+    started_at = datetime.now(timezone.utc).isoformat()
     from pipeline import PipelineProfile, build_pipeline
 
     from background_sound import make_mixer
@@ -44,6 +50,12 @@ async def start_phone_call(websocket, session_id: str, serializer, caller_number
     headers = {"X-Source": "phone", "X-Caller-Role": role, "X-Caller-Name": first_name}
 
     control = CallControl(erp, max_secs=float(config.CALL_MAX_MINUTES) * 60)
+    live = None
+    if live_view:
+        from live_view import LiveView
+
+        live = LiveView(session_id)
+        control.on_end = live.ended
     profile = PipelineProfile(
         serializer=serializer,
         audio_in_rate=STT_RATE,
@@ -57,6 +69,10 @@ async def start_phone_call(websocket, session_id: str, serializer, caller_number
         on_built=control.attach,
         stt_language_code=STT_LANGUAGE,
         audio_out_mixer=make_mixer(),  # quiet office under the call, unless PHONE_BACKGROUND=off
+        audio_channels=2,  # caller and bot on separate tracks in the saved recording
+        observers=[live] if live else [],
     )
     worker = build_pipeline(websocket, "en", session_id, profile)
-    return PhoneCall(worker, control, caller_number, role, first_name)
+    if live:
+        live.worker = worker
+    return PhoneCall(worker, control, caller_number, role, first_name, live, started_at)

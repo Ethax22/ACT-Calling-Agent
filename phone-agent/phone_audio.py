@@ -15,6 +15,7 @@ from pipecat.frames.frames import (
     InterruptionFrame,
     OutputAudioRawFrame,
     OutputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessorSetup
 from pipecat.serializers.base_serializer import FrameSerializer
@@ -49,7 +50,7 @@ class BrowserPhoneSerializer(FrameSerializer):
             ulaw = await pcm_to_ulaw(frame.audio, frame.sample_rate, LINE_RATE, self._out_to_line)
             # The page plays this at 8 kHz.
             return await ulaw_to_pcm(ulaw, LINE_RATE, LINE_RATE, self._out_from_line) if ulaw else None
-        if isinstance(frame, OutputTransportMessageFrame):
+        if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):  # urgent: live view
             return None if self.should_ignore_frame(frame) else json.dumps(frame.message)
         if isinstance(frame, InterruptionFrame):
             # Same message the website widget understands: drop queued bot audio.

@@ -36,6 +36,7 @@ class CallControl:
         self._cap_task = None
         self.ended_by = ""            # why the call ended from our side: end_call, idle, time_limit, transfer
         self.transfer_to = None       # (department, number) once a transfer was asked for
+        self.on_end = None            # async callback(reason): the test page's live view
 
     def attach(self, ns) -> None:
         """Pipeline hook (PipelineProfile.on_built)."""
@@ -68,6 +69,8 @@ class CallControl:
 
     async def say_and_end(self, line: str, reason: str) -> None:
         self.ended_by = self.ended_by or reason
+        if self.on_end:
+            await self.on_end(self.ended_by)
         frames = ([TTSSpeakFrame(line)] if line.strip() else []) + [EndWorkerFrame(reason=reason)]
         await self._ns.worker.queue_frames(frames)
 

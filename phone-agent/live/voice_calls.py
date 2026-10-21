@@ -108,6 +108,11 @@ async def main():
             print(f"total bot audio {audio_seconds(call):.1f}s")
         await call.close()
         await asyncio.sleep(2)
+    print("live view messages (what the test page showed):")
+    for t, m in call.messages:
+        if m.get("type") != "UserStartedSpeaking":
+            shown = {k: v for k, v in m.items() if k != "type"}
+            print(f"  {t:6.1f}s {m['type']:12} {json.dumps(shown, ensure_ascii=False)[:150]}")
     newest = max(h.LOGS_DIR.glob("*/phone-test-*/transcript.json"), key=lambda p: p.stat().st_mtime)
     print("transcript:", newest.parent.name)
     for m in json.loads(newest.read_text(encoding="utf-8"))["messages"]:
