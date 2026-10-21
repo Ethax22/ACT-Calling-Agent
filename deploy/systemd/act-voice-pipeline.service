@@ -1,0 +1,18 @@
+[Unit]
+Description=Agni AI website voice (widget's Let's Talk: /voice/en, /voice/ta, /detect-language)
+After=network-online.target act-rag-backend.service
+Wants=network-online.target act-rag-backend.service
+
+[Service]
+User=azureuser
+WorkingDirectory=/home/azureuser/ACT-Voice-Assistant/voice-pipeline
+# Uses the phone-agent venv: same Pipecat version, and it already holds every package
+# voice-pipeline imports (checked 2026-10-21), so the VM needs no third environment.
+ExecStart=/home/azureuser/ACT-Calling-Agent/phone-agent/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8001
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

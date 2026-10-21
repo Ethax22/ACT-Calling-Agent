@@ -6,17 +6,20 @@ Phase 4 of `ACT-Voice-Assistant/docs/Calling_Agent_DIY_Implementation_Plan.md`. 
 
 | Service | Port | Reachable from |
 |---|---|---|
-| nginx (HTTPS, free Let's Encrypt certificate) | 80, 443 | the internet |
-| `act-phone-agent` (calls, browser test line) | 8002 | nginx only |
-| `act-rag-backend` (shared brain) | 8000 | the VM only |
+| nginx (HTTPS, free Let's Encrypt certificate) | 80, 443 | the internet, password-protected |
+| website page with the Agni AI widget | (static files) | `https://agni-agent.centralindia.cloudapp.azure.com/` |
+| `act-rag-backend` (shared brain) | 8000 | only `/widget/chat` through nginx; the rest stays on the VM |
+| `act-voice-pipeline` (website voice) | 8001 | `/voice/en`, `/voice/ta`, `/detect-language` through nginx |
+| `act-phone-agent` (calls, browser test line) | 8002 | `/test`, `/health`, and `/vobiz/` from Phase 5, through nginx |
 | `act-erp-lookup` (records, transfer numbers) | 8100 | the VM only |
 
-- The three services start on boot and restart if they crash (systemd).
-- The browser test page `https://<your DNS name>/test` asks for a password you set in step 8.
-- rag-backend and erp-lookup are **not** public. erp-lookup can read student records, and only the phone agent on the same VM needs it.
-- The website voice service (`voice-pipeline/server.py`) is not run here. The phone agent imports its modules directly, so it doesn't need that service.
+- The four services start on boot and restart if they crash (systemd).
+- The whole site asks for a password you set in step 8, except `/health` and the future `/vobiz/` routes (Vobiz can't type a password).
+- rag-backend's keyed routes (`/v1/chat/completions`, `/calling-agent/ask`, `/admin/...`) and erp-lookup are **not** public. erp-lookup can read student records, and only the phone agent on the same VM needs it.
+- The website voice service and erp-lookup run with the phone agent's Python environment (same Pipecat version, same packages), so the VM has only two environments.
+- The Indus agent, still live, keeps calling rag-backend through your laptop's ngrok address. This VM doesn't change that.
 
-VM facts (2026-10-21): `act-agent-vm`, Central India, Ubuntu 24.04, Standard_D2s_v5, public IP `20.244.2.204`, user `azureuser`, key `C:\Users\praka\.ssh\act-agent-vm_key.pem`. Ports 80 and 443 are open; SSH is limited to your IP.
+VM facts (2026-10-21): `act-agent-vm`, Central India, Ubuntu 24.04, Standard_D2s_v5, public IP `20.244.2.204`, DNS name `agni-agent.centralindia.cloudapp.azure.com`, user `azureuser`, key `C:\Users\praka\.ssh\act-agent-vm_key.pem`. Ports 80 and 443 are open; SSH is limited to your IP.
 
 Commands marked **laptop** run in PowerShell on your Windows machine. Commands marked **VM** run inside the SSH session.
 
@@ -102,30 +105,36 @@ It ends with `OK: .env paths set for this VM` and prints six settings. Check tha
 ## 7. Start the services (VM)
 
 ```bash
-sudo cp ~/ACT-Calling-Agent/deploy/systemd/*.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now act-rag-backend act-erp-lookup act-phone-agent
+sudo cp ~/ACT-Calling-Agent/deploy/systemd/*.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now act-rag-backend act-erp-lookup act-voice-pipeline act-phone-agent
 ```
 
-Wait about 60 seconds (the first start renders the greeting and loads the speech models), then:
+Copy the website page to where nginx serves it (nginx can't read your home folder):
 
 ```bash
-curl -s 127.0.0.1:8100/health; echo; curl -s 127.0.0.1:8000/health; echo; curl -s 127.0.0.1:8002/health; echo
+sudo mkdir -p /var/www/agni-widget && sudo cp -r ~/ACT-Voice-Assistant/widget/. /var/www/agni-widget/
 ```
 
-Expected: `{"ok":true}`, `{"status":"ok"}`, `{"status":"ok"}`. The very first rag-backend start also builds its search index (the embedding cache is not on GitHub), so if 8000 or 8002 doesn't answer yet, wait another minute and run the line again. If one still fails, see **Problems** below.
+Wait about 60 seconds (the first start renders the greetings and loads the speech models), then:
+
+```bash
+for p in 8100 8000 8001 8002; do echo -n "$p: "; curl -s 127.0.0.1:$p/health; echo; done
+```
+
+Expected: `8100: {"ok":true}`, then `{"status":"ok"}` for 8000, 8001 and 8002. The very first rag-backend start also builds its search index (the embedding cache is not on GitHub), so if a port doesn't answer yet, wait another minute and run the line again. If one still fails, see **Problems** below.
 
 ## 8. nginx and the test page password (VM)
 
-Put your DNS name in the first line (Azure portal: VM → Overview → DNS name):
+Set the DNS name (saved in the Azure portal on 2026-10-21):
 
 ```bash
-DNS=act-agent.centralindia.cloudapp.azure.com
+DNS=agni-agent.centralindia.cloudapp.azure.com
 ```
 
 ```bash
 sudo cp ~/ACT-Calling-Agent/deploy/nginx/act-agent.conf /etc/nginx/sites-available/act-agent && sudo sed -i "s/DNS_NAME_HERE/$DNS/" /etc/nginx/sites-available/act-agent && sudo ln -sf /etc/nginx/sites-available/act-agent /etc/nginx/sites-enabled/act-agent && sudo rm -f /etc/nginx/sites-enabled/default
 ```
 
-Set the test page password (username `prakash`; it asks for the password twice):
+Set the site password (username `prakash`; it asks for the password twice). To let someone else test, add them later with the same command **without** `-c` (with `-c` it starts the file over): `sudo htpasswd /etc/nginx/act-agent.htpasswd <name>`.
 
 ```bash
 sudo htpasswd -c /etc/nginx/act-agent.htpasswd prakash
@@ -149,9 +158,9 @@ It ends with `Successfully deployed certificate`. The certificate renews itself;
 
 ## 10. Check from the laptop
 
-1. Open `https://<your DNS name>/health` in the browser. It shows `{"status":"ok"}` with a padlock.
-2. Open `https://<your DNS name>/test`, log in as `prakash` with your password, and allow the microphone.
-3. Hold a call as you did locally, with caller numbers from `LOCAL_TEST.md` (for example 9000000003). Expect the greeting within about a second of connecting.
+1. Open `https://agni-agent.centralindia.cloudapp.azure.com/health`. It shows `{"status":"ok"}` with a padlock, without asking for a password.
+2. **Website:** open `https://agni-agent.centralindia.cloudapp.azure.com/`, log in as `prakash`. The page with the Agni AI widget appears. Type a question in the chat, then try "Let's Talk" (allow the microphone).
+3. **Phone test line:** open `https://agni-agent.centralindia.cloudapp.azure.com/test` and hold a call as you did locally, with caller numbers from `LOCAL_TEST.md` (for example 9000000003). Expect the greeting within about a second of connecting.
 
 This completes plan steps 4.2 and 4.3.
 
@@ -163,20 +172,21 @@ This completes plan steps 4.2 and 4.3.
 |---|---|
 | Watch the phone agent live | `journalctl -u act-phone-agent -f` (Ctrl+C to stop watching) |
 | See the last 200 lines of a service | `journalctl -u act-rag-backend -n 200 --no-pager` |
-| Restart everything | `sudo systemctl restart act-rag-backend act-erp-lookup act-phone-agent` |
-| Status of all three | `systemctl status act-rag-backend act-erp-lookup act-phone-agent --no-pager` |
+| Watch the website voice live | `journalctl -u act-voice-pipeline -f` |
+| Restart everything | `sudo systemctl restart act-rag-backend act-erp-lookup act-voice-pipeline act-phone-agent` |
+| Status of all four | `systemctl status act-rag-backend act-erp-lookup act-voice-pipeline act-phone-agent --no-pager` |
 
-**Updating the code** after new commits are pushed:
+**Updating the code** after new commits are pushed (this also refreshes the website page):
 
 ```bash
-cd ~/ACT-Voice-Assistant && git pull && cd ~/ACT-Calling-Agent && git pull && sudo systemctl restart act-rag-backend act-erp-lookup act-phone-agent
+cd ~/ACT-Voice-Assistant && git pull && cd ~/ACT-Calling-Agent && git pull && sudo cp -r ~/ACT-Voice-Assistant/widget/. /var/www/agni-widget/ && sudo systemctl restart act-rag-backend act-erp-lookup act-voice-pipeline act-phone-agent
 ```
 
 If a `requirements.txt` changed, rerun its line from step 4 before restarting. If a file in `deploy/systemd/` changed, rerun step 7's first command.
 
 **Changing a setting:** edit `~/ACT-Calling-Agent/.env` (for example `nano ~/ACT-Calling-Agent/.env`), then restart. Example: add `TURN_TAKING_TRACE=1` to log every voice-detection and interruption event.
 
-**Call transcripts and audio:** `~/ACT-Voice-Assistant/voice-pipeline/logs/<UTC date>/phone-test-<id>/`. To copy one to the laptop (laptop):
+**Call transcripts and audio:** phone test calls and website voice chats are in `~/ACT-Voice-Assistant/voice-pipeline/logs/<UTC date>/` (phone ones start with `phone-test-`); typed chats are in `~/ACT-Voice-Assistant/rag-backend/logs/`. To copy one to the laptop (laptop):
 
 ```powershell
 scp -i "$env:USERPROFILE\.ssh\act-agent-vm_key.pem" -r "azureuser@20.244.2.204:ACT-Voice-Assistant/voice-pipeline/logs/<date>/<folder>" .
@@ -194,10 +204,12 @@ sqlite3 ~/ACT-Calling-Agent/erp-lookup/erp.db "delete from audit where caller li
 |---|---|
 | A health check in step 7 fails | `journalctl -u <service name> -n 80 --no-pager`. The usual cause is a missing key: the error names it (`... is missing from ...`) |
 | `MISSING:` from step 6 | A copy in step 5 failed; rerun that line |
-| `502 Bad Gateway` in the browser | The phone agent is down or still starting: check step 7's health line |
+| `502 Bad Gateway` in the browser | The service behind that page is down or still starting: check step 7's health line |
+| Website page shows `403 Forbidden` or `404` | Step 7's widget copy wasn't run, or ran before the clone: run it again |
+| Chat answers "something went wrong" | `journalctl -u act-rag-backend -n 80 --no-pager` |
 | certbot: `Timeout during connect` or `NXDOMAIN` | Port 80 is closed in the Azure network rules, or the DNS name is wrong or not yet saved |
 | SSH: `Connection timed out` | Your IP changed. Azure portal → VM → Networking → SSH rule → Source: My IP address → Save |
-| The test page loads but the call won't connect | Reload the page and log in again; the browser must send the password with the call connection too. Then check `journalctl -u act-phone-agent -n 80` |
+| The page loads but the call or "Let's Talk" won't connect | Reload the page and log in again; the browser must send the password with the call connection too. Then check `journalctl -u act-phone-agent -n 80` (test line) or `journalctl -u act-voice-pipeline -n 80` (website) |
 
 ## Cost and cleanup
 
