@@ -1,0 +1,16 @@
+[Unit]
+Description=Agni AI phone agent (calls + browser test line)
+After=network-online.target act-rag-backend.service act-erp-lookup.service
+Wants=network-online.target act-rag-backend.service act-erp-lookup.service
+
+[Service]
+User=azureuser
+WorkingDirectory=/home/azureuser/ACT-Calling-Agent/phone-agent
+ExecStart=/home/azureuser/ACT-Calling-Agent/phone-agent/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8002
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

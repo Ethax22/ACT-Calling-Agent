@@ -1,0 +1,17 @@
+[Unit]
+Description=Agni AI erp-lookup (records, caller identity, transfer numbers)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=azureuser
+WorkingDirectory=/home/azureuser/ACT-Calling-Agent/erp-lookup
+# Uses the phone-agent venv, same as start-local.ps1 (it only needs fastapi + uvicorn).
+ExecStart=/home/azureuser/ACT-Calling-Agent/phone-agent/venv/bin/python -m uvicorn api:app --host 127.0.0.1 --port 8100
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

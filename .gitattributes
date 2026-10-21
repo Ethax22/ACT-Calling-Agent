@@ -1,0 +1,3 @@
+# Files run on the Linux VM must keep Unix line endings.
+*.sh text eol=lf
+deploy/** text eol=lf
