@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config  # noqa: F401,E402
 import aiohttp  # noqa: E402
 from erp_client import ErpClient  # noqa: E402
-from tools import TOOLS, _compact, faculty_id_said  # noqa: E402
+from tools import TOOLS, _compact, caller_words_since_last_lookup, faculty_id_said  # noqa: E402
 
 OPENAI_TOOLS = [{"type": "function", "function": f.to_default_dict()} for f in TOOLS.standard_tools]
 BACKEND = os.environ["RAG_BACKEND_PUBLIC_URL"].rstrip("/")
@@ -34,7 +34,9 @@ async def run_tool(erp, number, name, args, messages, state):
             fid = state["fid"]
         elif fid != state.get("fid") and not faculty_id_said(type("C", (), {"messages": messages})(), fid):
             return {"status": "need_details", "speech": "Ask the caller for their faculty ID. Do not guess it."}
-        result = await erp.class_summary(number, fid, str(args.get("topic", "")), str(args.get("class_name", "")))
+        ctx = type("C", (), {"messages": messages})()
+        class_name = str(args.get("class_name", "")).strip() or caller_words_since_last_lookup(ctx)
+        result = await erp.class_summary(number, fid, str(args.get("topic", "")), class_name)
         if result.get("status") in ("ok", "choose_class", "choose_topic"):
             state["fid"] = fid
         return result
@@ -83,6 +85,15 @@ async def faculty_dialogs(http):
     # FAC1002 (9000000006) has one class, so no list.
     await dialog(http, "faculty-one-class", "9000000006", [
         "How did my class do in the latest test?", "FAC1002", "yes"])
+    # Replay of a real Tamil call (2026-10-21): attendance for one class, then marks for the other.
+    # Before the fix the second request was sent to the reception.
+    await dialog(http, "faculty-tamil-two-requests", "9000000004", [
+        "என்னோட கிளாஸோட இன்ஃபர்மேஷன் வேணும்.",
+        "எனக்கு வந்து அட்டனன்ஸ் சம்மரி தான் வேணும். என்னோட ஃபேக்கல்டி ஐடி வந்து FAC1001.",
+        "கரெக்ட் தாங்க. என்னோட கிளாஸ்ஸோட சம்மரி சொல்லுங்க.",
+        "என்னோட கிளாஸ் வந்து சிஎஸ்சி 2023 ஏ செக்ஷன்.",
+        "சரி ஓகேங்க.",
+        "அப்படியே என்னோட வேற ஒரு கிளாஸ் இருக்கு. ECE 2025 A செக்ஷன். அதுல இருந்து எனக்கு மார்க்ஸ் வேணும்."])
     # A wrong ID (counts one failed try on 9000000006; unlock afterwards).
     await dialog(http, "faculty-wrong-id", "9000000006", [
         "Show me students with low attendance", "my ID is FAC 9999", "yes"])

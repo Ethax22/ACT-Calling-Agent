@@ -107,6 +107,19 @@ def test_the_verified_faculty_id_is_reused_when_the_caller_picks_a_class():
     assert erp.calls[1][1] == ("9000000004", "FAC1001", "low_attendance", "CSE 2023")
 
 
+def test_the_callers_own_words_name_the_class_when_the_model_leaves_it_out():
+    erp = FakeErp()
+    handlers = tools.make_handlers(erp, _control(), "9000000004")
+    p, got = _params({"faculty_id": "FAC1001", "topic": "marks_summary"})
+    p.context = _user("the latest result for my ECE class", "FAC 1001", "yes")
+    asyncio.run(handlers["get_class_summary"](p))
+    assert "ECE" in erp.calls[0][1][3]
+    # after an answer, only the words since then count: "my other class" must not reuse "CSE"
+    ctx = SimpleNamespace(messages=[{"role": "user", "content": "CSE attendance"}, {"role": "tool", "content": "{}"},
+                                    {"role": "user", "content": "marks for my other class"}])
+    assert tools.caller_words_since_last_lookup(ctx) == "marks for my other class"
+
+
 def test_the_four_tool_names_the_model_sees():
     assert [t.name for t in tools.TOOLS.standard_tools] == [
         "get_student_report", "get_class_summary", "transfer_call", "end_call"]
@@ -179,6 +192,22 @@ def test_post_call_record_is_clamped_to_the_allowed_values():
                             "lead_phone": "98765 43210", "call_summary": "x", "language_used": "TAMIL"})
     assert rec["admission_interest"] == "unclear" and rec["call_disposition"] == "answered"
     assert rec["caller_type"] == "other" and rec["lead_phone"] == "9876543210" and rec["language_used"] == "tamil"
+
+
+def test_post_call_caller_type_comes_from_the_identified_role(monkeypatch, tmp_path):
+    t = tmp_path / "transcript.json"
+    t.write_text(json.dumps({"messages": [{"role": "user", "content": "class summary"}]}), encoding="utf-8")
+    monkeypatch.setattr(post_call, "_transcript_path", lambda s: t)
+    monkeypatch.setattr(post_call, "_append_sheet", lambda row: False)
+
+    async def extract(messages):
+        return {"caller_type": "current_student", "call_disposition": "answered"}
+
+    monkeypatch.setattr(post_call, "_extract", extract)
+    rec = asyncio.run(post_call.record_call("phone-test-x", "faculty", "9000000004", "transfer", None))
+    assert rec["caller_type"] == "faculty"
+    rec = asyncio.run(post_call.record_call("phone-test-x", "unknown", "9111111111", "caller", None))
+    assert rec["caller_type"] == "current_student"   # unknown callers: the model's reading stands
 
 
 def test_background_sound_loops_cleanly_and_stays_quiet(monkeypatch, tmp_path):

@@ -368,9 +368,12 @@ def class_summary(body: ClassIn):
         if not period:  # "No attendance found" became "no attendance issues" in a live test (2026-10-21)
             speech = f"Attendance for {label} has not been uploaded yet, so I can't tell you who is below 75 percent."
         elif rows:
-            speech = (f"{label}: {len(rows)} student{'s are' if len(rows) != 1 else ' is'} below 75 percent attendance. "
-                      + "; ".join(f"{r['name']} {r['pct']:.0f}" for r in rows[:5])
-                      + (f", and {len(rows) - 5} more." if len(rows) > 5 else "."))
+            # Every name up to ten. With "5 names and 3 more" the model retold it in Tamil as
+            # "6 named, 2 more" (2026-10-21); nothing left to count is nothing to miscount.
+            shown = rows[:10]
+            speech = (f"{label}: {len(rows)} student{'s are' if len(rows) != 1 else ' is'} below 75 percent attendance: "
+                      + "; ".join(f"{r['name']}, {r['pct']:.0f} percent" for r in shown)
+                      + (f". The other {len(rows) - len(shown)} are not read out on the phone." if len(rows) > len(shown) else "."))
         else:
             speech = f"{label}: no students are below 75 percent attendance."
     audit(con, body.caller_number, "faculty", f"{fid}:{'-'.join(args)}", topic, "ok")

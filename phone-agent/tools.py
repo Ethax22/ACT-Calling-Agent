@@ -78,6 +78,22 @@ def _compact(text: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", normalize_spoken_numbers(text or "").upper())
 
 
+def caller_words_since_last_lookup(context) -> str:
+    """What the caller said after the last tool result (or in the whole call before the first). Used
+    as class_name when the model leaves it out: a caller who said "my ECE class" up front was asked
+    to pick a class again (2026-10-21). Only words since the last answer, so "my other class" after
+    a CSE answer does not pick CSE again."""
+    said = []
+    for m in reversed(context.messages):
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "tool":
+            break
+        if m.get("role") == "user" and isinstance(m.get("content"), str):
+            said.append(m["content"])
+    return " ".join(reversed(said))
+
+
 def faculty_id_said(context, faculty_id: str) -> bool:
     """True when the faculty ID the model passes appears in the caller's own words. Same reason
     as missing_record_detail: a made-up ID would count as a failed try against the caller."""
@@ -162,8 +178,9 @@ def make_handlers(erp, control, caller_number: str) -> dict:
             await params.result_callback({"status": "need_details",
                                           "speech": "Ask the caller for their faculty ID. Do not guess it."})
             return
-        logger.info(f"[tool] get_class_summary topic={a.get('topic')} class={a.get('class_name')!r}")  # no faculty ID in logs
-        result = await erp.class_summary(caller_number, faculty_id, str(a.get("topic", "")), str(a.get("class_name", "")))
+        class_name = str(a.get("class_name", "")).strip() or caller_words_since_last_lookup(params.context)
+        logger.info(f"[tool] get_class_summary topic={a.get('topic')} class_given={bool(a.get('class_name'))}")  # no faculty ID or words in logs
+        result = await erp.class_summary(caller_number, faculty_id, str(a.get("topic", "")), class_name)
         if result.get("status") in ("ok", "choose_class", "choose_topic"):
             verified["faculty_id"] = faculty_id
         await params.result_callback(result)

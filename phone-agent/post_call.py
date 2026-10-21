@@ -109,6 +109,11 @@ async def record_call(session_id: str, role: str, caller_number: str, ended_by: 
         if raw is None:
             return None
         record = _clean(raw)
+        # The number already told us who called; the model labelled a faculty caller a
+        # "current_student" (2026-10-21) from the transcript alone.
+        known = {"student": "current_student", "parent": "parent", "faculty": "faculty"}.get(role)
+        if known:
+            record["caller_type"] = known
         if transfer_to:
             record["call_disposition"] = "transferred"
         record.update({
