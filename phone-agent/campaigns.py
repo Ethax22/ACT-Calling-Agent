@@ -174,10 +174,16 @@ _SOURCE_WORDS = {"chat": "our website chat", "voice": "our website", "phone": "a
 
 def build_recipients(rows: list[dict], mapping: dict) -> tuple[list[dict], list[dict]]:
     """Map rows to leads. Returns (valid, invalid); invalid rows carry a reason. Duplicate
-    numbers keep the first row."""
+    numbers keep the first row. mapping["_required"] lists lead fields a row must have
+    (the wizard's Required column); the phone number is always required."""
     valid, invalid, seen = [], [], set()
+    required = [f for f in (mapping.get("_required") or []) if f in LEAD_FIELDS and f != "phone"]
     for i, row in enumerate(rows, start=1):
         get = lambda f: (row.get(mapping.get(f) or "", "") or "").strip()
+        missing = next((f for f in required if not get(f)), None)
+        if missing and get("phone"):
+            invalid.append({"row": i, "reason": f"no {missing.replace('_', ' ')}"})
+            continue
         phone = normalize_phone(get("phone"))
         if not get("phone"):
             invalid.append({"row": i, "reason": "no phone number"})

@@ -48,6 +48,11 @@ def test_csv_columns_are_guessed_and_rows_validated():
     assert [v["phone"] for v in valid] == ["9876543210", "9876501234"]
     assert valid[0]["enquiry_source"] == "our website chat" and valid[0]["enquiry_date"] == "2026-10-04"
     assert [i["reason"].split(":")[0] for i in invalid] == ["not a valid mobile number", "duplicate number", "no phone number"]
+    # the wizard's Required column: a row without a required field is left out
+    valid, invalid = C.build_recipients(parsed["rows"], {**parsed["suggested"], "_required": ["lead_course"]})
+    assert [v["lead_name"] for v in valid] == ["Ravi", "Priya"]
+    valid, invalid = C.build_recipients([{"m": "9876543210", "n": ""}], {"phone": "m", "lead_name": "n", "_required": ["lead_name"]})
+    assert not valid and invalid[0]["reason"] == "no lead name"
 
 
 def test_campaign_needs_a_name_valid_numbers_and_a_sensible_schedule():

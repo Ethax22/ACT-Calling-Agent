@@ -134,6 +134,20 @@ async def campaigns_detail(campaign_id: str, status: str = ""):
     return camp
 
 
+@app.get("/test/api/attempts")
+async def attempts(hours: float = 24):
+    """Every campaign attempt in the last `hours` (the campaigns list's calls chart)."""
+    if not TEST_PAGE_ENABLED:
+        return _off()
+    from datetime import timedelta
+
+    import campaigns as C
+
+    since = C.iso(C.now_utc() - timedelta(hours=max(0.1, min(hours, 24 * 90))))
+    rows = await asyncio.to_thread(C.all_attempts, since)
+    return {"attempts": [{k: r[k] for k in ("started_at", "result", "campaign_id", "campaign_name")} for r in rows]}
+
+
 @app.post("/test/api/campaigns/{campaign_id}/cancel")
 async def campaigns_cancel(campaign_id: str):
     if not TEST_PAGE_ENABLED:
@@ -172,7 +186,8 @@ async def campaigns_stops(campaign_id: str, body: dict = Body(...)):
 
     import campaigns as C
 
-    phones = body.get("phones") or re.split(r"[\s,;]+", body.get("text") or "")
+    # One number per line (or comma/semicolon separated); spaces inside a number are kept ("98765 43210").
+    phones = body.get("phones") or re.split(r"[\r\n,;\t]+", body.get("text") or "")
     return {"added": await asyncio.to_thread(C.stop_add, campaign_id, phones),
             "total": await asyncio.to_thread(C.stop_count, campaign_id)}
 
@@ -265,6 +280,17 @@ async def ringing_decline(attempt_id: str):
     from dialler import dialler
 
     return {"declined": dialler.decline(attempt_id)}
+
+
+_PAGE_FILES = {"campaigns.js": "application/javascript", "campaigns.css": "text/css"}
+
+
+@app.get("/test/static/{name}")
+async def test_static(name: str):
+    """The test page's own script and styles (a fixed list: nothing else in the folder is served)."""
+    if not TEST_PAGE_ENABLED or name not in _PAGE_FILES:
+        return Response(status_code=404)
+    return FileResponse(STATIC / name, media_type=_PAGE_FILES[name], headers={"Cache-Control": "no-cache"})
 
 
 @app.websocket("/test/ws")
