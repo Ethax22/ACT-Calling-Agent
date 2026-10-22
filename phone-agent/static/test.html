@@ -655,7 +655,10 @@ async function startCall() {
   $('callBtn').disabled = true; $('caller').disabled = true; $('state').textContent = direction === 'outbound' ? 'Calling the lead…' : 'Connecting…';
   document.querySelectorAll('#leadForm input').forEach(i => i.disabled = true);
   micStream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
-  micCtx = new AudioContext({sampleRate: 16000}); playCtx = new AudioContext();
+  // The player runs at the line's 8 kHz: at the device rate (48 kHz) the browser converted each
+  // 20 ms piece on its own and left a step at every join, heard as crackling (2026-10-22: 144 steps
+  // in 1.8 s of a clean test sound at 48 kHz, none at 8 kHz).
+  micCtx = new AudioContext({sampleRate: 16000}); playCtx = new AudioContext({sampleRate: 8000});
   playOut = playCtx.createGain(); botAnalyser = playCtx.createAnalyser(); botAnalyser.fftSize = 512;
   playOut.connect(botAnalyser); botAnalyser.connect(playCtx.destination);
   const url = URL.createObjectURL(new Blob([WORKLET], {type: 'application/javascript'}));
