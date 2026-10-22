@@ -27,7 +27,7 @@ import json
 import os
 import statistics
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import call_history as H
 import campaigns as C
@@ -129,8 +129,45 @@ def load_calls(direction: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------- the report
+def load_website_conversations() -> list[dict]:
+    """One row per saved website conversation (typed chat and voice), shaped like load_calls()
+    so the Sentiment tab can use the same code. Judged ones carry their cached judgement."""
+    m = sentiment.module()
+    out = []
+    for conv in m._load_conversations(date(2000, 1, 1), datetime.now(timezone.utc).date() + timedelta(days=1), "website"):
+        folder = conv["path"].parent
+        started = datetime.fromtimestamp(conv["path"].stat().st_mtime, tz=timezone.utc)
+        out.append({"id": conv["session_id"], "started": started, "started_at": started.isoformat(),
+                    "user_turns": conv["user_turns"], "language": conv["language"] or "unknown",
+                    "role": conv["channel"], "caller": "", "lead_name": "",
+                    "sentiment": sentiment.judged(folder, website=True)})
+    return out
+
+
+def website_report(date_from: str | None, date_to: str | None, language: str = "", role: str = "") -> dict:
+    """Agent Analytics for the website bot: only the Sentiment tab has data (chat and voice)."""
+    all_convs = load_website_conversations()
+    today = datetime.now(C.IST).date()
+    d_to = date.fromisoformat(date_to) if date_to else today
+    if date_from:
+        d_from = date.fromisoformat(date_from)
+    else:
+        firsts = [_ist_date(c["started"]) for c in all_convs]
+        d_from = min(firsts) if firsts else today - timedelta(days=6)
+    d_from = max(d_from, d_to - timedelta(days=365))
+    convs = [c for c in all_convs if d_from <= _ist_date(c["started"]) <= d_to
+             and (not language or c["language"] == language) and (not role or c["role"] == role)]
+    days = [d_from + timedelta(days=i) for i in range((d_to - d_from).days + 1)]
+    return {"agent": "website", "from": d_from.isoformat(), "to": d_to.isoformat(),
+            "filters": {"campaigns": [], "languages": sorted({c["language"] for c in all_convs}),
+                        "roles": sorted({c["role"] for c in all_convs})},
+            "sentiment": _sentiment(convs, days), "calls": []}
+
+
 def report(direction: str = "inbound", date_from: str | None = None, date_to: str | None = None,
            campaign: str = "", language: str = "", role: str = "") -> dict:
+    if direction == "website":
+        return website_report(date_from, date_to, language, role)
     direction = "outbound" if direction == "outbound" else "inbound"
     all_calls = load_calls(direction)
     attempts = C.all_attempts() if direction == "outbound" else []
@@ -402,6 +439,12 @@ def _sentiment(calls: list[dict], days: list[date]) -> dict:
         "by_language": split(lambda c: c["language"]),
         "questions": sorted(({"question": v[0][0], "count": len(v), "call_ids": [cid for _, cid in v][:5]}
                              for v in questions.values()), key=lambda q: -q["count"])[:30],
+        # Every analysed call, newest first: what the interest and topic bars list when clicked.
+        "items": [{"id": c["id"], "started_at": c["started_at"], "caller": c.get("caller", ""),
+                   "role": c["role"], "language": c["language"], "lead_name": c["lead_name"],
+                   "interest": c["sentiment"]["admission_interest"], "topics": c["sentiment"].get("topics") or [],
+                   "sentiment": c["sentiment"]["sentiment"], "summary": c["sentiment"].get("summary", "")}
+                  for c in sorted(done, key=lambda c: c["started_at"] or "", reverse=True)],
         "flagged": [{"id": c["id"], "started_at": c["started_at"], "role": c["role"], "language": c["language"],
                      "lead_name": c["lead_name"], "sentiment": c["sentiment"]["sentiment"], "trend": c["sentiment"]["trend"],
                      "frustrated": c["sentiment"]["frustrated"], "reason": c["sentiment"].get("frustration_reason", ""),

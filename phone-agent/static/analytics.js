@@ -17,7 +17,7 @@
   const dur = s => s == null ? '—' : `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.round(s % 60)).padStart(2, '0')}`;
   const esc = s => String(s ?? '').replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
 
-  let data = null, tab = 'overview', unit = 'n', engTab = 'hour', groupBy = 'language', logsAll = false;
+  let sentFilter = null, data = null, tab = 'overview', unit = 'n', engTab = 'hour', groupBy = 'language', logsAll = false;
 
   /* ---------------------------------------------------------------- tooltip */
   const tip = $('aTip');
@@ -96,7 +96,8 @@
     const max = Math.max(...entries.map(e => e.n)) || 1, sum = total || entries.reduce((s, e) => s + e.n, 0);
     return `<div class="hbars">${entries.map(e => {
       const shown = unit === 'pct' && sum ? pct(e.n / sum) : nf(e.n);
-      return `<div class="hbar"><span class="lab" title="${esc(e.label)}">${esc(e.label)}</span>
+      const fl = e.filter ? ` data-filter="${esc(e.filter)}" role="button" tabindex="0" title="Show these calls"` : '';
+      return `<div class="hbar${e.filter ? ' click' : ''}${e.filter && e.filter === sentFilter ? ' active' : ''}"${fl}><span class="lab" title="${esc(e.label)}">${esc(e.label)}</span>
         <span class="track"><span class="fill mark" style="width:${100 * e.n / max}%;background:${e.color || color}" data-tip="<b>${esc(e.label)}</b><br>${shown}${e.tip ? '<br>' + esc(e.tip) : ''}"></span></span>
         <span class="num">${shown}</span></div>`;
     }).join('')}</div>`;
@@ -117,7 +118,8 @@
   const dayLabel = d => new Date(d + 'T00:00:00+05:30').toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short'});
   const hourLabel = h => `${h % 12 || 12}${h < 12 ? 'AM' : 'PM'}`;
   const outcomeColor = (o, i) => { const k = OUTCOME_ORDER.indexOf(o); return o === 'no record' ? 'var(--chart-muted)' : S((k >= 0 ? k : i) % 8 + 1); };
-  const isOut = () => data.agent === 'outbound';
+  const isOut = () => data.agent === 'outbound', isWeb = () => data.agent === 'website';
+  const unitWord = () => isWeb() ? 'conversation' : 'call';
 
   /* ---------------------------------------------------------------- tabs */
   function overview() {
@@ -225,6 +227,19 @@
      colours: positive and negative from the palette, neutral in the muted grey midpoint. */
   const SENT_COLOR = {positive: S(3), neutral: 'var(--chart-muted)', negative: S(8)};
   let sentJob = null, sentTimer = null;
+  /** The calls behind a clicked interest level or topic. */
+  function filteredCalls(s) {
+    if (!sentFilter) return '<p class="note" style="margin:0 0 12px">Click an admission-interest level or a topic to list those ' + unitWord() + 's.</p>';
+    const [kind, key] = sentFilter.split(':');
+    const hit = (s.items || []).filter(c => kind === 'interest' ? c.interest === key : (c.topics || []).includes(key));
+    const view = id => isWeb() ? '' : `<button class="link" data-call="${esc(id)}">View</button>`;
+    const title = kind === 'interest' ? `${isWeb() ? 'Conversations' : 'Calls'} with ${key} ${isOut() ? 'interest' : 'admission interest'}` : `${isWeb() ? 'Conversations' : 'Calls'} that raised "${key}"`;
+    const who = c => isWeb() ? [] : [esc(c.lead_name || words(c.role) || '—')];
+    const body = hit.length ? table(['Start time (IST)', isWeb() ? 'Channel' : 'Caller', ...(isWeb() ? [] : [isOut() ? 'Lead' : 'Role']), 'Language', 'Interest', 'Sentiment', 'Summary', ''],
+      hit.map(c => [esc(fmtDate(c.started_at)), esc(isWeb() ? words(c.role) : (c.caller || '—')), ...who(c), esc(words(c.language)), esc(c.interest),
+        `<span class="sent ${c.sentiment}">${c.sentiment}</span>`, esc(c.summary), view(c.id)])) : '<div class="empty">No ${unitWord()}s</div>';
+    return `<div id="aSentList">${card(title, `${nf(hit.length)} ${unitWord()}${hit.length === 1 ? '' : 's'} · <button class="link" id="aSentClear">Clear</button>`, `<div class="wrap-cols">${body}</div>`)}</div>`;
+  }
   function sentiment() {
     const s = data.sentiment, days = s.series.map(x => dayLabel(x.date)), n = s.analysed;
     const share = k => n ? pct(k / n, 0) + ' of analysed' : '';
@@ -234,33 +249,34 @@
     const sent = ['positive', 'neutral', 'negative'].map(k => ({label: k, n: s.sentiment[k], color: SENT_COLOR[k]}));
     const trend = ['improved', 'steady', 'worsened'].map(k => ({label: k, n: s.trend[k] || 0,
       color: k === 'worsened' ? SENT_COLOR.negative : k === 'improved' ? SENT_COLOR.positive : 'var(--chart-muted)'}));
-    const interest = ['high', 'medium', 'low', 'none'].map(k => ({label: k, n: s.interest[k] || 0}));
-    const topics = Object.entries(s.topics).map(([k, v]) => ({label: k, n: v}));
+    const interest = ['high', 'medium', 'low', 'none'].map(k => ({label: k, n: s.interest[k] || 0, filter: 'interest:' + k}));
+    const topics = Object.entries(s.topics).map(([k, v]) => ({label: k, n: v, filter: 'topic:' + k}));
     const split = rows => table(['', 'Calls', 'Positive', 'Neutral', 'Negative'],
       rows.map(r => [esc(words(r.label) || '—'), nf(r.calls), nf(r.positive), nf(r.neutral),
         `${nf(r.negative)}${r.negative ? ` <span class="dim">· ${pct(r.negative / r.calls, 0)}</span>` : ''}`]));
-    const view = id => `<button class="link" data-call="${esc(id)}">View</button>`;
+    const view = id => isWeb() ? '' : `<button class="link" data-call="${esc(id)}">View</button>`;
     const qs = table(['Question', 'Calls', ''], s.questions.map(q => [esc(q.question), nf(q.count), q.call_ids.slice(0, 3).map(view).join(' ')]));
     const flagged = table(['Start time (IST)', isOut() ? 'Lead' : 'Role', 'Language', 'Sentiment', 'Mood', 'Frustration', 'Summary', ''],
       s.flagged.map(f => [esc(fmtDate(f.started_at)), esc(f.lead_name || words(f.role) || '—'), esc(words(f.language)),
         `<span class="sent ${f.sentiment}">${f.sentiment}</span>`, esc(f.trend), f.frustrated ? esc(f.reason || 'yes') : '', esc(f.summary), view(f.id)]));
     const running = sentJob && sentJob.running;
     const job = running ? `Analysing… ${nf(sentJob.done)} of ${nf(sentJob.total)} conversations`
-      : s.not_analysed ? `${nf(s.not_analysed)} call${s.not_analysed === 1 ? '' : 's'} in this range not analysed yet` : 'Every call in this range is analysed';
-    return `<div class="sent-bar"><p class="note">Sarvam 105B's reading of the caller's side of each call, made right after the call. Not yet checked against calls labelled by hand (English or Tamil): use it to pick calls to listen to, not as a score.</p>
+      : s.not_analysed ? `${nf(s.not_analysed)} ${unitWord()}${s.not_analysed === 1 ? '' : 's'} in this range not analysed yet` : `Every ${unitWord()} in this range is analysed`;
+    return `<div class="sent-bar"><p class="note">Sarvam 105B's reading of the ${isWeb() ? "visitor's side of each website chat and voice conversation, made after it ends" : "caller's side of each call, made right after the call"}. Not yet checked against calls labelled by hand (English or Tamil): use it to pick calls to listen to, not as a score.</p>
         <div class="sent-actions"><span class="dim" id="aSentJob">${job}${sentJob && sentJob.error ? ` · ${esc(sentJob.error)}` : ''}</span>
         <button class="btn" id="aSentUpdate" ${running ? 'disabled' : ''} title="Analyse the calls not yet analysed and rebuild the full report (website and phone) for these dates">Update</button>
         <a class="btn" href="/test/sentiment-report" target="_blank" rel="noopener">Full report: website and phone</a></div></div>`
-      + tiles([['Calls analysed', nf(n), `of ${nf(s.calls)} where the caller spoke`], ['Positive', nf(s.sentiment.positive), share(s.sentiment.positive)],
+      + tiles([[isWeb() ? 'Conversations analysed' : 'Calls analysed', nf(n), `of ${nf(s.calls)} where the ${isWeb() ? 'visitor' : 'caller'} spoke`], ['Positive', nf(s.sentiment.positive), share(s.sentiment.positive)],
                ['Negative', nf(s.sentiment.negative), share(s.sentiment.negative)], ['Showed frustration', nf(s.frustrated), share(s.frustrated)],
                [isOut() ? 'High interest' : 'High admission interest', nf(s.interest.high || 0), share(s.interest.high || 0)],
                ['With an unanswered question', nf(s.with_unanswered), share(s.with_unanswered)]])
       + card(unit === 'pct' ? 'Negative share by day' : 'Sentiment by day', '', daily)
-      + `<div class="grid2">${card('Overall sentiment', 'By the end of the call', donut(sent, nf(n), 'calls analysed'))}
+      + `<div class="grid2">${card('Overall sentiment', isWeb() ? 'By the end of the conversation' : 'By the end of the call', donut(sent, nf(n), unitWord() + 's analysed'))}
          ${card('Mood from start to end', '', hbars(trend, S(1), n))}</div>`
       + `<div class="grid2">${card(isOut() ? 'Interest in joining' : 'Admission interest', '', hbars(interest, S(1), n))}
          ${card('Topics raised', 'A call can raise several', hbars(topics, S(1), n))}</div>`
-      + `<div class="grid2">${card(isOut() ? 'By lead' : 'By caller role', '', split(s.by_role))}${card('By language', '', split(s.by_language))}</div>`
+      + `<div class="grid2">${card(isOut() ? 'By lead' : isWeb() ? 'By channel' : 'By caller role', '', split(s.by_role))}${card('By language', '', split(s.by_language))}</div>`
+      + filteredCalls(s)
       + card('Questions the bot could not answer', 'As judged from the transcript; it sometimes lists questions the bot did answer, so open the call to check.', `<div class="wrap-cols">${qs}</div>`)
       + card('Negative or frustrated calls', 'Newest first', `<div class="wrap-cols">${flagged}</div>`);
   }
@@ -328,6 +344,12 @@
     document.querySelectorAll('#aLogsMode button').forEach(b => b.onclick = () => { logsAll = b.dataset.m === 'a'; render(); });
     document.querySelectorAll('#aBody [data-call]').forEach(b => b.onclick = () => openDetails(b.dataset.call));
     const csv = $('aCsv'); if (csv) csv.onclick = downloadCsv;
+    document.querySelectorAll('#aBody .hbar.click').forEach(b => {
+      const pick = () => { sentFilter = sentFilter === b.dataset.filter ? null : b.dataset.filter; render();
+        const t = $('aSentList'); if (t) t.scrollIntoView({behavior: 'smooth', block: 'start'}); };
+      b.onclick = pick; b.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+    });
+    const sc = $('aSentClear'); if (sc) sc.onclick = () => { sentFilter = null; render(); };
     const su = $('aSentUpdate'); if (su) su.onclick = sentUpdate;
   }
   function downloadCsv() {
@@ -355,8 +377,10 @@
     if (!$('aTo').value) $('aTo').value = data.to;
     fillSelect('aCampaign', data.filters.campaigns, 'All campaigns', true);
     fillSelect('aLanguage', data.filters.languages, 'All languages', true);
-    fillSelect('aRole', data.filters.roles, 'All roles', true);
+    fillSelect('aRole', data.filters.roles, isWeb() ? 'All channels' : 'All roles', true);
     $('aCampaign').hidden = !isOut(); $('aRole').hidden = isOut();
+    document.querySelectorAll('#aTabs button').forEach(b => { b.hidden = isWeb() && b.dataset.t !== 'sentiment'; });
+    if (isWeb() && tab !== 'sentiment') { tab = 'sentiment'; document.querySelectorAll('#aTabs button').forEach(x => x.classList.toggle('on', x.dataset.t === 'sentiment')); }
     render();
   }
   const istToday = () => new Date().toLocaleDateString('en-CA', {timeZone: 'Asia/Kolkata'});

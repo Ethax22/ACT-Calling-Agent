@@ -104,10 +104,10 @@ def latest_report() -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
-def judged(folder: Path) -> dict | None:
+def judged(folder: Path, website: bool = False) -> dict | None:
     """This call's judgement by the current phone prompt, or None (not judged yet, or judged
     by the website prompt before phone calls had their own)."""
     try:
-        return module().cached_result(folder)
+        return module().cached_result(folder, website)
     except Exception:
         return None

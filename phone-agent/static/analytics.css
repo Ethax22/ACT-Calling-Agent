@@ -75,3 +75,6 @@
   .grid2{grid-template-columns:1fr}
   .a-filters .spacer{display:none}
 }
+.hbar.click{cursor:pointer;border-radius:6px;padding:2px 4px;margin:-2px -4px}
+.hbar.click:hover,.hbar.click:focus-visible{background:var(--soft);outline:none}
+.hbar.active{background:var(--soft);font-weight:600}
